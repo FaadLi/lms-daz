@@ -29,6 +29,20 @@ export const ChildList: React.FC<ChildListProps> = ({
   const [parentWhatsapp, setParentWhatsapp] = useState('');
   const [notes, setNotes] = useState('');
 
+  // Handle ESC key to dismiss add child modal
+  React.useEffect(() => {
+    if (!isAddModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsAddModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isAddModalOpen]);
+
   const allChildren = db.getChildren();
 
   const filteredChildren = allChildren.filter((c) => {
@@ -240,7 +254,12 @@ export const ChildList: React.FC<ChildListProps> = ({
 
       {/* Add Child Modal */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsAddModalOpen(false);
+          }}
+        >
           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl p-5 border border-slate-200 max-h-[90vh] overflow-y-auto">
             <h3 className="text-base font-bold text-slate-900 mb-1">Tambah Murid Baru</h3>
             <p className="text-xs text-slate-500 mb-4">

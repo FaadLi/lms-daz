@@ -25,6 +25,20 @@ export const PaymentManager: React.FC = () => {
   const [dueDate, setDueDate] = useState('2026-10-15');
   const [notes, setNotes] = useState('Paket 8 sesi les privat');
 
+  // Handle ESC key to dismiss add payment modal
+  React.useEffect(() => {
+    if (!isAddModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsAddModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isAddModalOpen]);
+
   const handleSavePayment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!childId) return;
@@ -197,7 +211,12 @@ export const PaymentManager: React.FC = () => {
 
       {/* Add Payment Modal */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsAddModalOpen(false);
+          }}
+        >
           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl p-5 border border-slate-200">
             <h3 className="text-base font-bold text-slate-900 mb-1">Buat Tagihan Les Baru</h3>
             <p className="text-xs text-slate-500 mb-4">

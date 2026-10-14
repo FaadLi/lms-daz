@@ -29,6 +29,20 @@ export const AdminSettings: React.FC = () => {
     window.location.reload();
   };
 
+  // Handle ESC key to dismiss reset modal
+  React.useEffect(() => {
+    if (!isResetConfirmOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsResetConfirmOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isResetConfirmOpen]);
+
   return (
     <div className="pb-24 max-w-4xl mx-auto px-4 sm:px-6 pt-2 space-y-5">
       <div>
@@ -145,7 +159,12 @@ export const AdminSettings: React.FC = () => {
 
       {/* Reset Confirmation Modal */}
       {isResetConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsResetConfirmOpen(false);
+          }}
+        >
           <div className="bg-white rounded-2xl w-full max-w-sm p-5 shadow-xl border border-slate-200">
             <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center mb-3">
               <AlertTriangle className="w-5 h-5" />

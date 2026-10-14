@@ -46,20 +46,39 @@ export default function App() {
       const queryToken = urlParams.get('token');
       if (queryToken) {
         setParentToken(queryToken);
+        setIsTeacherPreview(false);
         setCurrentView('parent_view');
         return;
       }
 
-      // Check hash #/report/:token
+      // Check hash
       const hash = window.location.hash;
-      if (hash.startsWith('#/report/')) {
-        const tokenFromHash = hash.replace('#/report/', '').split('?')[0];
+
+      // Teacher preview route: #/preview/:token
+      if (hash.startsWith('#/preview/')) {
+        const tokenFromHash = hash.replace('#/preview/', '').split('?')[0];
         if (tokenFromHash) {
           setParentToken(tokenFromHash);
+          setIsTeacherPreview(true);
           setCurrentView('parent_view');
           return;
         }
       }
+
+      // Public parent report route: #/report/:token
+      if (hash.startsWith('#/report/')) {
+        const tokenFromHash = hash.replace('#/report/', '').split('?')[0];
+        if (tokenFromHash) {
+          setParentToken(tokenFromHash);
+          setIsTeacherPreview(false);
+          setCurrentView('parent_view');
+          return;
+        }
+      }
+
+      // If navigating to admin views, ensure preview state is reset
+      setIsTeacherPreview(false);
+      setParentToken('');
 
       if (hash.startsWith('#/children/')) {
         const cId = hash.replace('#/children/', '');
@@ -80,7 +99,7 @@ export default function App() {
         setCurrentView('payments');
       } else if (hash === '#/settings') {
         setCurrentView('settings');
-      } else if (hash === '#/dashboard' || hash === '#/') {
+      } else if (hash === '#/dashboard' || hash === '#/' || !hash) {
         setCurrentView('dashboard');
       }
     };
@@ -137,15 +156,19 @@ export default function App() {
     setParentToken(targetToken);
     setIsTeacherPreview(true);
     setCurrentView('parent_view');
+    window.location.hash = `#/preview/${targetToken}`;
   };
 
   const handleExitParentPreview = () => {
     setIsTeacherPreview(false);
+    setParentToken('');
     setCurrentView('dashboard');
     window.location.hash = '#/dashboard';
   };
 
   const handleNavigate = (view: string) => {
+    setIsTeacherPreview(false);
+    setParentToken('');
     setCurrentView(view);
     window.location.hash = `#/${view}`;
   };

@@ -50,7 +50,31 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
   const [commentInput, setCommentInput] = useState('');
   const [commentSuccessNotice, setCommentSuccessNotice] = useState(false);
 
-  // Load child by secure token
+  // Safely record token access once on mount without re-render side-effects
+  useEffect(() => {
+    if (token) {
+      db.recordTokenAccess(token);
+    }
+  }, [token]);
+
+  // Handle ESC key to exit report modal or preview
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (selectedReportDetail) {
+          setSelectedReportDetail(null);
+        } else if (isTeacherPreview && onExitPreview) {
+          onExitPreview();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedReportDetail, isTeacherPreview, onExitPreview]);
+
+  // Load child by secure token (pure query)
   const { child, tokenObj } = db.getChildByToken(token);
 
   if (!child || !tokenObj) {
@@ -176,8 +200,8 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
           </div>
         </div>
 
-        {/* Scrollable Content Area */}
-        <main className="flex-1 p-4 pb-24 overflow-y-auto space-y-4">
+        {/* Scrollable Content Area with smooth natural page scrolling */}
+        <main className="flex-1 p-4 pb-28 space-y-4">
           {/* TAB 1: BERANDA (Answers 4 questions in 5-10 seconds) */}
           {activeTab === 'beranda' && (
             <>
@@ -684,7 +708,12 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
 
         {/* Full Report Detail Modal when Parent taps any report */}
         {selectedReportDetail && (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div
+            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-xs"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setSelectedReportDetail(null);
+            }}
+          >
             <div className="bg-white rounded-t-3xl sm:rounded-2xl w-full max-w-md max-h-[85vh] overflow-y-auto shadow-2xl p-5 border border-slate-200">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
                 <span className="text-xs font-bold text-indigo-600">

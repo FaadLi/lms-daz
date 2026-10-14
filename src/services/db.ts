@@ -585,7 +585,12 @@ class LesReportDB {
         accessCount: 0,
       };
       tokens.push(tokenObj);
-      this.setStorage('tokens', tokens);
+      // Save directly to localStorage without dispatching disruptive re-render events
+      try {
+        localStorage.setItem(STORAGE_KEY_PREFIX + 'tokens', JSON.stringify(tokens));
+      } catch (e) {
+        console.error('Failed to save token to localStorage', e);
+      }
     }
     return tokenObj;
   }
@@ -594,19 +599,31 @@ class LesReportDB {
     return this.getTokenForChild(childId);
   }
 
+  // Pure query without side-effects or event dispatching to prevent infinite re-render loops
   getChildByToken(tokenStr: string): { child?: Child; tokenObj?: PrivateReportToken } {
     const tokens = this.getTokens();
     const tokenObj = tokens.find((t) => t.token === tokenStr && !t.isRevoked);
     if (!tokenObj) {
       return {};
     }
-    // Update access count
-    tokenObj.accessCount += 1;
-    tokenObj.lastAccessedAt = new Date().toISOString();
-    this.setStorage('tokens', tokens);
-
     const child = this.getChildById(tokenObj.childId);
     return { child, tokenObj };
+  }
+
+  // Explicitly record token access asynchronously or on component mount
+  recordTokenAccess(tokenStr: string): void {
+    if (typeof window === 'undefined') return;
+    try {
+      const tokens = this.getTokens();
+      const tokenObj = tokens.find((t) => t.token === tokenStr && !t.isRevoked);
+      if (tokenObj) {
+        tokenObj.accessCount += 1;
+        tokenObj.lastAccessedAt = new Date().toISOString();
+        localStorage.setItem(STORAGE_KEY_PREFIX + 'tokens', JSON.stringify(tokens));
+      }
+    } catch (e) {
+      console.error('Failed to record token access', e);
+    }
   }
 
   regenerateTokenForChild(childId: string): PrivateReportToken {

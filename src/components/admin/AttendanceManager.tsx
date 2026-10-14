@@ -22,6 +22,20 @@ export const AttendanceManager: React.FC = () => {
   const [endTime, setEndTime] = useState('17:00');
   const [notes, setNotes] = useState('');
 
+  // Handle ESC key to dismiss add attendance modal
+  React.useEffect(() => {
+    if (!isAddModalOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsAddModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isAddModalOpen]);
+
   const handleSaveAttendance = (e: React.FormEvent) => {
     e.preventDefault();
     if (!childId) return;
@@ -134,7 +148,12 @@ export const AttendanceManager: React.FC = () => {
 
       {/* Add Attendance Modal */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsAddModalOpen(false);
+          }}
+        >
           <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl p-5 border border-slate-200">
             <h3 className="text-base font-bold text-slate-900 mb-1">Catat Presensi Les</h3>
             <p className="text-xs text-slate-500 mb-4">

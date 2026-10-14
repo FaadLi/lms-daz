@@ -66,6 +66,20 @@ export const ChildDetail: React.FC<ChildDetailProps> = ({
   // Selected report detail modal for viewing complete report
   const [viewingReportDetail, setViewingReportDetail] = useState<LessonReport | null>(null);
 
+  // Handle ESC key for modals
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (viewingReportDetail) setViewingReportDetail(null);
+        if (isRegenerateConfirmOpen) setIsRegenerateConfirmOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [viewingReportDetail, isRegenerateConfirmOpen]);
+
   const child = db.getChildById(childId);
 
   if (!child) {
@@ -772,7 +786,12 @@ export const ChildDetail: React.FC<ChildDetailProps> = ({
 
       {/* Full Report Detail Modal */}
       {viewingReportDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setViewingReportDetail(null);
+          }}
+        >
           <div className="bg-white rounded-3xl w-full max-w-lg shadow-xl overflow-hidden border border-slate-200 max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50">
               <h3 className="text-sm font-bold text-slate-900">
@@ -842,7 +861,12 @@ export const ChildDetail: React.FC<ChildDetailProps> = ({
 
       {/* Regenerate Token Confirmation Dialog */}
       {isRegenerateConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsRegenerateConfirmOpen(false);
+          }}
+        >
           <div className="bg-white rounded-2xl w-full max-w-sm p-5 shadow-xl border border-slate-200">
             <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mb-3">
               <AlertTriangle className="w-5 h-5" />
