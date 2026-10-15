@@ -453,6 +453,21 @@ export function ChildDetail({ id }: { id: string }) {
   const query = useQuery(`child:${id}`, () => db.get("children", id));
   const child = query.data;
 
+  const row1Tabs = [
+    { key: "lesson_reports", label: "Laporan", icon: FileText },
+    { key: "progress", label: "Progress", icon: LineChart },
+    { key: "schedules", label: "Jadwal", icon: Calendar },
+    { key: "attendance", label: "Absensi", icon: CheckCircle2 },
+  ] as const;
+
+  const row2Tabs = [
+    { key: "invoices", label: "Pembayaran", icon: CreditCard },
+    { key: "photos", label: "Foto", icon: Camera },
+    { key: "comments", label: "Komentar", icon: MessageSquare },
+  ] as const;
+
+  const allTabs = [...row1Tabs, ...row2Tabs];
+
   const tabs: Record<string, { label: string; icon: typeof FileText }> = {
     lesson_reports: { label: "Laporan", icon: FileText },
     progress: { label: "Progress", icon: LineChart },
@@ -574,25 +589,82 @@ export function ChildDetail({ id }: { id: string }) {
           {/* Akses Orang Tua Section */}
           <Links child={child} />
 
-          {/* Navigation Tabs */}
-          <nav className="flex items-center gap-1.5 overflow-x-auto pb-1 border-b border-slate-200/80 scrollbar-none">
-            {Object.entries(tabs).map(([key, item]) => {
+          {/* Navigation Tabs - Mobile 2-Row Layout */}
+          <nav
+            aria-label="Tab Navigasi Murid (Mobile)"
+            className="md:hidden space-y-1.5 pb-2 border-b border-slate-200/80"
+          >
+            {/* Row 1: Laporan, Progress, Jadwal, Absensi */}
+            <div className="grid grid-cols-4 gap-1 min-[360px]:gap-1.5">
+              {row1Tabs.map((item) => {
+                const Icon = item.icon;
+                const isActive = tab === item.key;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    aria-pressed={isActive}
+                    onClick={() => setTab(item.key)}
+                    className={`inline-flex items-center justify-center gap-1 min-[360px]:gap-1.5 px-1 min-[360px]:px-2 py-2 text-[11px] min-[360px]:text-xs font-bold rounded-xl transition-all whitespace-nowrap cursor-pointer w-full ${
+                      isActive
+                        ? "bg-indigo-600 text-white shadow-xs"
+                        : "bg-white text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/50 border border-slate-200"
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5 shrink-0" />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Row 2: Pembayaran, Foto, Komentar */}
+            <div className="grid grid-cols-3 gap-1 min-[360px]:gap-1.5">
+              {row2Tabs.map((item) => {
+                const Icon = item.icon;
+                const isActive = tab === item.key;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    aria-pressed={isActive}
+                    onClick={() => setTab(item.key)}
+                    className={`inline-flex items-center justify-center gap-1 min-[360px]:gap-1.5 px-1 min-[360px]:px-2 py-2 text-[11px] min-[360px]:text-xs font-bold rounded-xl transition-all whitespace-nowrap cursor-pointer w-full ${
+                      isActive
+                        ? "bg-indigo-600 text-white shadow-xs"
+                        : "bg-white text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/50 border border-slate-200"
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5 shrink-0" />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
+
+          {/* Navigation Tabs - Desktop Layout */}
+          <nav
+            aria-label="Tab Navigasi Murid (Desktop)"
+            className="hidden md:flex items-center gap-1.5 overflow-x-auto pb-1 border-b border-slate-200/80 scrollbar-none"
+          >
+            {allTabs.map((item) => {
               const Icon = item.icon;
-              const isActive = tab === key;
+              const isActive = tab === item.key;
               return (
                 <button
-                  key={key}
+                  key={item.key}
                   type="button"
                   aria-pressed={isActive}
-                  onClick={() => setTab(key)}
+                  onClick={() => setTab(item.key)}
                   className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl transition-all whitespace-nowrap cursor-pointer ${
                     isActive
                       ? "bg-indigo-600 text-white shadow-xs"
                       : "bg-white text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/50 border border-slate-200"
                   }`}
                 >
-                  <Icon className="w-3.5 h-3.5" />
-                  {item.label}
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span>{item.label}</span>
                 </button>
               );
             })}
