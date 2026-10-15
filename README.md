@@ -22,12 +22,18 @@ npx supabase link --project-ref "$env:SUPABASE_PROJECT_REF"
 node scripts/namespace-storage.mjs prepare
 npx supabase db push
 node scripts/namespace-storage.mjs verify
-npx supabase secrets set ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+node scripts/supabase-cli.mjs origins
 npx supabase functions deploy lesreport
 node scripts/namespace-storage.mjs finalize
 ```
 
-The wrapper `node scripts/supabase-cli.mjs link` and its `push`/`deploy` commands read the same variables from `.env.local`, verify that the target matches the frontend project, and redact privileged credentials from CLI output. The `origins` command configures local development origins only. Add the exact production origin before release.
+The wrapper `node scripts/supabase-cli.mjs link` and its `push`/`deploy` commands read the same variables from `.env.local`, verify that the target matches the frontend project, and redact privileged credentials from CLI output. The `origins` command always sets the exact production and development allowlist below, so it cannot reset production to localhost-only:
+
+```text
+ALLOWED_ORIGINS=https://lms.daztore.web.id,http://localhost:3000,http://127.0.0.1:3000
+```
+
+This is backend configuration, not a `VITE_` variable. No wildcard or arbitrary preview origins are accepted. For function-only releases use `node scripts/supabase-cli.mjs origins` followed by `node scripts/supabase-cli.mjs deploy`; do not run database migration commands for CORS updates.
 
 For a completely new project, apply the migrations with `db push`, deploy the function, then run `namespace-storage.mjs finalize` to retire the empty historical bucket. The `prepare`/`verify` steps above are for existing installations. All current LMS tables and RPCs use the `lms_` namespace; the private Storage bucket is `lms_media`. The existing nine migrations are immutable; `202610150010_lms_namespace.sql` performs the namespace transition without replacing business rows.
 
@@ -46,6 +52,8 @@ For a completely new project, apply the migrations with `db push`, deploy the fu
 ## Private media and report links
 
 Uploads are prepared in the database before Storage accepts their path. The Edge Function checks size and image signature before finalizing metadata. Supported formats: JPEG, PNG, WebP; maximum 5 MB, 10 photos/report.
+
+Upload errors identify RPC preparation, Storage upload, or Edge finalization. A failed/lost finalization response is reconciled against metadata before suggesting a retry. Edge diagnostics contain only a recognized action, fixed stage and HTTP status; JWTs, parent tokens, payloads, signed URLs and secrets are never included.
 
 Storage uses the private `lms_media` bucket. New keys are organized as `avatars/<owner>/...`, `children/<owner>/<child>/...`, and `reports/<owner>/<child>/<report>/...`. Existing keys are retained during copy/cutover to preserve references. Signed URLs expire after 60 seconds; an already issued URL may remain usable until expiry after a report-link revocation. The UI offers a refresh action. Parent endpoints check revocation and expiry on every request and return bounded, scoped data without object paths.
 
@@ -78,6 +86,8 @@ Tests use isolated PostgreSQL (PGlite) with minimal Auth/Storage schema shims; t
 
 The backend remains on Supabase, so Workers migration is unnecessary.
 
-Deployment TODO: the verified Auth Site URL remains `https://daztore.web.id`, with redirect allowlist `https://daztore.web.id/admin-daz/auth/callback`. These values have not been changed. The final LMS domain must be supplied before changing Auth URLs or adding the production origin to Edge `ALLOWED_ORIGINS`.
+The production LMS domain is `https://lms.daztore.web.id` and is included in Edge `ALLOWED_ORIGINS`. Separate deployment TODO: the verified Auth Site URL remains `https://daztore.web.id`, with redirect allowlist `https://daztore.web.id/admin-daz/auth/callback`. These Auth values have not been changed; review them in a separate deployment task. Frontend diagnostic changes take effect when the new `dist` is published through the Cloudflare Pages pipeline.
 
 The current namespace and validation record is in [docs/NAMESPACE_STATUS.md](docs/NAMESPACE_STATUS.md). [docs/MIGRATION_STATUS.md](docs/MIGRATION_STATUS.md) records the earlier migration before namespacing. Browser UI verification remains outstanding; API validation does not establish visual or interactive UI parity.
+
+The production CORS deployment, hosted regression results and original pending-upload reconciliation are recorded in [docs/PRODUCTION_CORS_STATUS.md](docs/PRODUCTION_CORS_STATUS.md).

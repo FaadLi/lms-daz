@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 const e = { ...parseEnv(readFileSync(".env.local", "utf8")), ...process.env };
 const ref = new URL(e.VITE_SUPABASE_URL).hostname.split(".")[0];
 const url = e.VITE_SUPABASE_URL;
+const productionOrigin = "https://lms.daztore.web.id";
 const management = async (path, body) => {
   const response = await fetch(
     `https://api.supabase.com/v1/projects/${ref}${path}`,
@@ -39,6 +40,7 @@ const admin = createClient(url, secret, {
 });
 const fresh = () =>
   createClient(url, e.VITE_SUPABASE_PUBLISHABLE_KEY, {
+    global: { headers: { Origin: productionOrigin } },
     db: { retry: false, timeout: 15000 },
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -55,12 +57,17 @@ const edge = async (body, session) => {
   const response = await fetch(`${url}/functions/v1/lesreport`, {
     method: "POST",
     headers: {
+      Origin: productionOrigin,
       apikey: e.VITE_SUPABASE_PUBLISHABLE_KEY,
       "Content-Type": "application/json",
       ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
     },
     body: JSON.stringify(body),
   });
+  assert.equal(
+    response.headers.get("access-control-allow-origin"),
+    productionOrigin,
+  );
   return { status: response.status, data: await response.json() };
 };
 const users = [],
@@ -115,6 +122,44 @@ if (process.argv.includes("--cleanup")) {
   process.exit(0);
 }
 try {
+  for (const origin of [
+    productionOrigin,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://unknown-origin.invalid",
+  ]) {
+    const response = await fetch(`${url}/functions/v1/lesreport`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: origin,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,apikey,content-type",
+      },
+    });
+    const rejected = origin === "https://unknown-origin.invalid";
+    assert.equal(response.status, rejected ? 403 : 204);
+    assert.equal(
+      response.headers.get("access-control-allow-origin"),
+      rejected ? null : origin,
+    );
+    if (rejected) {
+      const post = await fetch(`${url}/functions/v1/lesreport`, {
+        method: "POST",
+        headers: { Origin: origin, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "issue-link" }),
+      });
+      assert.equal(post.status, 403);
+      assert.equal(post.headers.get("access-control-allow-origin"), null);
+    }
+  }
+  assert.equal(
+    (await edge({ action: "issue-link", childId: randomUUID(), days: 1 }))
+      .status,
+    401,
+  );
+  pass(
+    "production/development CORS, foreign origin rejection and anonymous Edge denial",
+  );
   const schema = await query(
     "select tablename,rowsecurity from pg_tables where schemaname='public' and tablename in ('lms_profiles','lms_parents','lms_children','lms_subjects','lms_report_templates','lms_schedules','lms_attendance','lms_lesson_reports','lms_comments','lms_invoices','lms_payment_transactions','lms_media_assets') order by tablename",
   );
@@ -458,6 +503,7 @@ try {
     ),
   );
   assetId = asset.id;
+  assert.equal(asset.state, "pending");
   await result(
     clientA.storage
       .from("lms_media")
@@ -467,20 +513,32 @@ try {
     (await clientB.storage.from("lms_media").download(asset.object_path)).error,
   );
   pass("private Storage denies foreign user");
+  assert.equal(
+    (await edge({ action: "finish-upload", assetId, version: 1 }, sessionB))
+      .status,
+    404,
+  );
   const finished = await edge(
     { action: "finish-upload", assetId, version: 1 },
     sessionA,
   );
   assert.equal(finished.status, 200);
-  assert.ok(
+  assert.equal(
     (
       await result(
-        clientA.storage
-          .from("lms_media")
-          .createSignedUrl(asset.object_path, 60),
+        clientA
+          .from("lms_media_assets")
+          .select("state")
+          .eq("id", assetId)
+          .single(),
       )
-    ).signedUrl,
+    ).state,
+    "ready",
   );
+  const signedPhoto = await result(
+    clientA.storage.from("lms_media").createSignedUrl(asset.object_path, 60),
+  );
+  assert.equal((await fetch(signedPhoto.signedUrl)).status, 200);
   pass("server-validated upload and authorized signed URL");
   for (const kind of ["profile", "avatar"]) {
     const table = kind === "profile" ? "lms_profiles" : "lms_children";
@@ -526,6 +584,29 @@ try {
         .single(),
     );
     assert.equal(attached.avatar_id, avatar.id);
+    assert.equal(
+      (
+        await result(
+          clientA
+            .from("lms_media_assets")
+            .select("state")
+            .eq("id", avatar.id)
+            .single(),
+        )
+      ).state,
+      "ready",
+    );
+    const signedAvatar = await result(
+      clientA.storage.from("lms_media").createSignedUrl(avatar.object_path, 60),
+    );
+    assert.equal((await fetch(signedAvatar.signedUrl)).status, 200);
+    assert.ok(
+      (
+        await clientB.storage
+          .from("lms_media")
+          .createSignedUrl(avatar.object_path, 60)
+      ).error,
+    );
     assert.ok(
       (await clientB.storage.from("lms_media").download(avatar.object_path))
         .error,
@@ -555,11 +636,31 @@ try {
   pass(
     "profile/child avatar upload, attachment, cross-account denial and deletion",
   );
+  const siblingReportId = randomUUID();
+  await rpc(clientA, "lms_save_record", {
+    p_table: "lms_lesson_reports",
+    p_data: {
+      id: siblingReportId,
+      child_id: childId,
+      subject_id: subjectId,
+      date: "2026-10-15",
+      duration_minutes: 60,
+      topic: "Sibling report excluded from scoped link",
+      what_learned: "Validation material",
+      learning_outcome: "Validation observation",
+      score: 75,
+    },
+  });
   const issued = await edge(
     { action: "issue-link", childId, reportId, days: 1 },
     sessionA,
   );
   assert.equal(issued.status, 200);
+  assert.equal(
+    (await edge({ action: "issue-link", childId, reportId, days: 1 }, sessionB))
+      .status,
+    403,
+  );
   const opened = await edge({
     action: "parent",
     token: issued.data.token,
@@ -568,7 +669,10 @@ try {
   });
   assert.equal(opened.status, 200);
   assert.equal(opened.data.items.length, 1);
+  assert.equal(opened.data.items[0].id, reportId);
+  assert.equal(opened.data.child.id, childId);
   assert.ok(opened.data.media[0].url);
+  assert.equal((await fetch(opened.data.media[0].url)).status, 200);
   assert.ok(!opened.data.media[0].object_path);
   const wrongSection = await edge({
     action: "parent",
@@ -576,6 +680,20 @@ try {
     section: "invoices",
   });
   assert.equal(wrongSection.status, 403);
+  assert.equal(
+    (
+      await edge({
+        action: "parent",
+        token: issued.data.token,
+        operation: "comment",
+        section: "comments",
+        reportId: siblingReportId,
+        id: randomUUID(),
+        message: "Scope rejection validation",
+      })
+    ).status,
+    403,
+  );
   pass("parent report scope and private photos");
   const parentComment = {
     action: "parent",

@@ -42,14 +42,14 @@ const commands = {
   origins: [
     "secrets",
     "set",
-    "ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000",
+    "ALLOWED_ORIGINS=https://lms.daztore.web.id,http://localhost:3000,http://127.0.0.1:3000",
     "--project-ref",
     ref,
   ],
 };
 const action = process.argv[2];
 if (!commands[action]) {
-  console.error("Use link, push or deploy");
+  console.error("Use link, push, origins or deploy");
   process.exit(1);
 }
 const args = ["--no-install", "supabase", ...commands[action]];

@@ -143,6 +143,21 @@ export const db = {
       p_key: key,
     }),
 };
+class RequestStageError extends Error {
+  readonly status?: number;
+  readonly detail: string;
+  constructor(stage: string, cause: unknown, status?: number, detail?: string) {
+    const previous = cause instanceof RequestStageError ? cause : null;
+    const httpStatus = status ?? (cause as { status?: number } | null)?.status;
+    const message = previous?.detail ?? detail ?? errorMessage(cause);
+    super(`${stage}${httpStatus ? ` (HTTP ${httpStatus})` : ""}: ${message}`, {
+      cause,
+    });
+    this.status = httpStatus;
+    this.detail = message;
+  }
+}
+
 // Parent requests carry no teacher session; the server scopes access using the token.
 export async function edge<T>(
   body: Record<string, unknown>,
@@ -151,24 +166,55 @@ export async function edge<T>(
   let authorization: string | undefined;
   if (authenticated) {
     const { data } = await client().auth.getSession();
-    if (!data.session) throw new Error("Session berakhir. Masuk kembali.");
+    if (!data.session)
+      throw new RequestStageError(
+        "Edge Function",
+        new Error("Session berakhir. Masuk kembali."),
+      );
     authorization = `Bearer ${data.session.access_token}`;
   }
-  const response = await fetch(
-    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/lesreport`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-        ...(authorization ? { Authorization: authorization } : {}),
+  let response: Response;
+  try {
+    response = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/lesreport`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          ...(authorization ? { Authorization: authorization } : {}),
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(20000),
       },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(20000),
-    },
-  );
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Permintaan gagal.");
+    );
+  } catch (error) {
+    throw new RequestStageError(
+      "Edge Function",
+      error,
+      undefined,
+      "Tidak dapat terhubung ke server. Periksa jaringan, CORS, atau batas waktu permintaan.",
+    );
+  }
+  let data;
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new RequestStageError(
+      "Edge Function",
+      error,
+      response.status,
+      "Respons server tidak valid.",
+    );
+  }
+  if (!response.ok)
+    throw new RequestStageError(
+      "Edge Function",
+      new Error(
+        typeof data?.error === "string" ? data.error : "Permintaan gagal.",
+      ),
+      response.status,
+    );
   return data as T;
 }
 export async function signedMedia(rows: Row[]): Promise<Row[]> {
@@ -197,20 +243,23 @@ export async function upload(
     file.size === 0
   )
     throw new Error("Gunakan JPG, PNG, atau WebP maksimal 5 MB.");
-  const asset = await call<Row>("lms_begin_upload", {
-    p_kind: kind,
-    p_child:
-      kind === "profile"
-        ? null
-        : kind === "avatar"
-          ? target.id
-          : target.child_id,
-    p_report: kind === "photo" ? target.id : null,
-    p_mime: file.type,
-    p_size: file.size,
-    p_caption: caption,
-  });
+  let asset: Row | undefined;
+  let stage = "RPC persiapan upload";
   try {
+    asset = await call<Row>("lms_begin_upload", {
+      p_kind: kind,
+      p_child:
+        kind === "profile"
+          ? null
+          : kind === "avatar"
+            ? target.id
+            : target.child_id,
+      p_report: kind === "photo" ? target.id : null,
+      p_mime: file.type,
+      p_size: file.size,
+      p_caption: caption,
+    });
+    stage = "Storage upload";
     const { error } = await client()
       .storage.from("lms_media")
       .upload(String(asset.object_path), file, {
@@ -218,21 +267,26 @@ export async function upload(
         contentType: file.type,
       });
     if (error) throw error;
+    stage = "Finalisasi upload";
     return await edge<{ ok: boolean; cleanupPending?: boolean }>(
       { action: "finish-upload", assetId: asset.id, version: target.version },
       true,
     );
   } catch (error) {
     // A lost response can follow a successful finalize. Reconcile before retrying.
-    try {
-      const current = await get("media_assets", asset.id);
-      if (current.state === "ready") return { ok: true, cleanupPending: true };
-    } catch {
-      /* Keep the original error when the status cannot be verified. */
+    if (asset) {
+      try {
+        const current = await get("media_assets", asset.id);
+        if (current.state === "ready")
+          return { ok: true, cleanupPending: true };
+      } catch {
+        /* Keep the original error when the status cannot be verified. */
+      }
     }
-    throw new Error(
-      `${errorMessage(error)} Muat ulang untuk memeriksa status upload sebelum mencoba lagi.`,
-      { cause: error },
-    );
+    const failure = new RequestStageError(stage, error);
+    if (asset)
+      failure.message +=
+        " Muat ulang untuk memeriksa status upload sebelum mencoba lagi.";
+    throw failure;
   }
 }

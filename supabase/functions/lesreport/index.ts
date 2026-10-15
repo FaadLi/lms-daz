@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.117.3";
 import { hashToken, imageMime, randomToken } from "../_shared/security.ts";
+import { requestLog, type RequestStage } from "../_shared/diagnostics.ts";
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const url = Deno.env.get("SUPABASE_URL")!;
@@ -45,6 +46,8 @@ async function cleanup(owner: string) {
 }
 
 Deno.serve(async (request) => {
+  let action: unknown = "unknown";
+  let stage: RequestStage = "cors";
   const origin = request.headers.get("origin") || "";
   const headers = {
     "Content-Type": "application/json",
@@ -57,12 +60,17 @@ Deno.serve(async (request) => {
       "authorization,apikey,content-type,x-client-info",
     "Access-Control-Allow-Methods": "POST,OPTIONS",
   };
-  const respond = (body: unknown, status = 200) =>
-    new Response(JSON.stringify(body), { status, headers });
+  const respond = (body: unknown, status = 200) => {
+    console.info(requestLog(action, stage, status));
+    return new Response(JSON.stringify(body), { status, headers });
+  };
   if (origin && !origins.includes(origin))
     return respond({ error: "Origin tidak diizinkan." }, 403);
-  if (request.method === "OPTIONS")
+  if (request.method === "OPTIONS") {
+    console.info(requestLog(action, stage, 204));
     return new Response(null, { status: 204, headers });
+  }
+  stage = "request";
   if (request.method !== "POST")
     return respond({ error: "Gunakan POST." }, 405);
   try {
@@ -74,7 +82,9 @@ Deno.serve(async (request) => {
     const body = JSON.parse(raw) as ObjectRow;
     if (typeof body.action !== "string")
       return respond({ error: "Permintaan tidak valid." }, 400);
+    action = body.action;
     if (body.action === "parent") {
+      stage = "token";
       if (
         typeof body.token !== "string" ||
         !/^[A-Za-z0-9_-]{43}$/.test(body.token)
@@ -84,6 +94,7 @@ Deno.serve(async (request) => {
       const ip =
         request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
         "unknown";
+      stage = "rate-limit";
       const allowed = await rpc<boolean>("lms_consume_request_limit", {
         p_key: await hashToken(`ip:${ip}:${secret}`),
         p_limit: 120,
@@ -102,6 +113,7 @@ Deno.serve(async (request) => {
         (typeof body.id !== "string" || !uuid.test(body.id))
       )
         return respond({ error: "Permintaan tidak valid." }, 400);
+      stage = "rpc";
       const result = await rpc<ObjectRow>("lms_parent_request", {
         p_hash: hash,
         p_action: body.operation || "read",
@@ -115,6 +127,7 @@ Deno.serve(async (request) => {
       const items = (result.items || []) as ObjectRow[];
       const all = body.section === "photos" ? [...media, ...items] : media;
       if (all.length) {
+        stage = "signed-read";
         const { data, error } = await admin.storage
           .from("lms_media")
           .createSignedUrls(
@@ -131,6 +144,7 @@ Deno.serve(async (request) => {
       return respond(result);
     }
     // Every privileged action verifies the actual Auth user. Body owner/role is ignored.
+    stage = "auth";
     const token = request.headers
       .get("authorization")
       ?.replace(/^Bearer\s+/i, "");
@@ -140,6 +154,7 @@ Deno.serve(async (request) => {
       error,
     } = await admin.auth.getUser(token);
     if (error || !user) return respond({ error: "Session tidak valid." }, 401);
+    stage = "rate-limit";
     if (
       !(await rpc<boolean>("lms_consume_request_limit", {
         p_key: `user:${user.id}`,
@@ -148,6 +163,7 @@ Deno.serve(async (request) => {
     )
       return respond({ error: "Terlalu banyak permintaan." }, 429);
     if (body.action === "issue-link") {
+      stage = "request";
       if (
         typeof body.childId !== "string" ||
         !uuid.test(body.childId) ||
@@ -157,6 +173,7 @@ Deno.serve(async (request) => {
       )
         return respond({ error: "Murid atau masa berlaku tidak valid." }, 400);
       const token = randomToken();
+      stage = "rpc";
       const result = await rpc<ObjectRow>("lms_issue_report_link", {
         p_owner: user.id,
         p_child: body.childId,
@@ -169,6 +186,7 @@ Deno.serve(async (request) => {
       return respond({ ...result, token });
     }
     if (body.action === "finish-upload") {
+      stage = "metadata";
       const { data: asset, error } = await admin
         .from("lms_media_assets")
         .select("*")
@@ -179,11 +197,13 @@ Deno.serve(async (request) => {
         return respond({ error: "Upload tidak ditemukan." }, 404);
       if (asset.state === "deleting")
         return respond({ error: "Upload sudah dihapus." }, 409);
+      stage = "storage-read";
       const { data: file, error: downloadError } = await admin.storage
         .from("lms_media")
         .download(asset.object_path);
       if (downloadError || !file) throw new Error("File missing");
       const bytes = new Uint8Array(await file.arrayBuffer());
+      stage = "image-validation";
       if (
         bytes.length !== asset.size_bytes ||
         bytes.length > 5242880 ||
@@ -195,20 +215,24 @@ Deno.serve(async (request) => {
           400,
         );
       }
+      stage = "rpc";
       await rpc("lms_finish_upload", {
         p_owner: user.id,
         p_asset: asset.id,
         p_version: body.version ?? null,
       });
       let cleanupPending = false;
+      stage = "cleanup";
       try {
         await cleanup(user.id);
       } catch {
         cleanupPending = true;
+        stage = "cleanup-pending";
       }
       return respond({ ok: true, cleanupPending });
     }
     if (body.action === "delete-media") {
+      stage = "delete-media";
       await remove(
         user.id,
         String(body.assetId),
@@ -216,7 +240,11 @@ Deno.serve(async (request) => {
       );
       return respond({ ok: true });
     }
-    if (body.action === "cleanup-media") return respond(await cleanup(user.id));
+    if (body.action === "cleanup-media") {
+      stage = "cleanup";
+      return respond(await cleanup(user.id));
+    }
+    stage = "request";
     return respond({ error: "Aksi tidak valid." }, 400);
   } catch (error) {
     const code = (error as { code?: string }).code;
