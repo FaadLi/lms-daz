@@ -84,3 +84,72 @@ export function paymentStatus(
         ? "sebagian"
         : "belum_lunas";
 }
+
+export function getPaymentStatusLabel(status: PaymentStatus): string {
+  switch (status) {
+    case "lunas":
+      return "Lunas";
+    case "belum_lunas":
+      return "Belum Lunas";
+    case "jatuh_tempo":
+      return "Jatuh Tempo";
+    case "sebagian":
+      return "Sebagian";
+    default:
+      return status;
+  }
+}
+
+export function getPaymentStatusStyle(status: PaymentStatus): {
+  bg: string;
+  text: string;
+  border: string;
+} {
+  switch (status) {
+    case "lunas":
+      return { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" };
+    case "belum_lunas":
+      return { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" };
+    case "jatuh_tempo":
+      return { bg: "bg-rose-50", text: "text-rose-700", border: "border-rose-200" };
+    case "sebagian":
+      return { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200" };
+    default:
+      return { bg: "bg-slate-50", text: "text-slate-700", border: "border-slate-200" };
+  }
+}
+
+export function getAttendanceLabel(status: string): string {
+  switch (status) {
+    case "hadir":
+      return "Hadir";
+    case "izin":
+      return "Izin";
+    case "sakit":
+      return "Sakit";
+    case "alpa":
+      return "Alpa";
+    default:
+      return status;
+  }
+}
+
+export function getAttendanceStyle(status: string): {
+  bg: string;
+  text: string;
+  border: string;
+} {
+  switch (status) {
+    case "hadir":
+      return { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" };
+    case "izin":
+      return { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" };
+    case "sakit":
+      return { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200" };
+    case "alpa":
+      return { bg: "bg-rose-50", text: "text-rose-700", border: "border-rose-200" };
+    default:
+      return { bg: "bg-slate-50", text: "text-slate-700", border: "border-slate-200" };
+  }
+}
+
