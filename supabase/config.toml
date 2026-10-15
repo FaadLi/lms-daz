@@ -1,0 +1,6 @@
+project_id = "lms-daz"
+
+[functions.lesreport]
+# Public token requests have no JWT. Privileged actions explicitly verify the
+# user's JWT with Auth getUser inside the handler before using an admin client.
+verify_jwt = false

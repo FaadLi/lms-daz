@@ -1,9 +1,8 @@
 import React from 'react';
-import { LessonReport } from '../../types';
 import { formatShortDateIndo } from '../../data/presets';
 
 interface ProgressChartProps {
-  reports: LessonReport[];
+  reports: {id:string;date:string;score:number;topic:string}[];
   childName: string;
 }
 
@@ -22,7 +21,7 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ reports, childName
     .slice(-6); // Last 6 lessons
 
   const scores = sortedReports.map((r) => r.score);
-  const minScore = Math.max(40, Math.min(...scores) - 10);
+  const minScore = Math.max(0, Math.min(...scores) - 10);
   const maxScore = Math.min(100, Math.max(...scores) + 10);
   const range = maxScore - minScore || 1;
 
@@ -55,7 +54,7 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ reports, childName
   }, '');
 
   // Calculate simple trend insight
-  let insightText = '';
+  let insightText: string;
   if (scores.length >= 2) {
     const first = scores[0];
     const last = scores[scores.length - 1];

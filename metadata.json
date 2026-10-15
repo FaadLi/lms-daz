@@ -2,5 +2,5 @@
   "name": "Les Report",
   "description": "Aplikasi mobile-first untuk manajemen les privat, absensi, pembayaran, dan buku raport digital anak dengan private link WhatsApp.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }
