@@ -63,6 +63,8 @@ Avatar replacement queues the previous object for deletion. Cleanup is retryable
 
 ## Validation
 
+Multi-subject schedule schema, migration evidence, changed files, validation and rollout notes: [Multi-subject Jadwal](docs/MULTI_SUBJECT_SCHEDULES.md).
+
 ```powershell
 npm run typecheck
 npm run typecheck:edge

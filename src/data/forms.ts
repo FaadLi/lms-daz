@@ -55,7 +55,7 @@ export const fields: Partial<Record<Entity, Field[]>> = {
   ],
   schedules: [
     ref("child_id", "Murid", "children"),
-    ref("subject_id", "Mata pelajaran", "subjects"),
+    { ...ref("subject_ids", "Mata pelajaran", "subjects"), multiple: true },
     {
       ...required("day_of_week", "Hari (0 Minggu – 6 Sabtu)", "number"),
       min: 0,

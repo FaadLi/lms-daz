@@ -161,11 +161,11 @@ try {
     "production/development CORS, foreign origin rejection and anonymous Edge denial",
   );
   const schema = await query(
-    "select tablename,rowsecurity from pg_tables where schemaname='public' and tablename in ('lms_profiles','lms_parents','lms_children','lms_subjects','lms_report_templates','lms_schedules','lms_attendance','lms_lesson_reports','lms_comments','lms_invoices','lms_payment_transactions','lms_media_assets') order by tablename",
+    "select tablename,rowsecurity from pg_tables where schemaname='public' and tablename in ('lms_profiles','lms_parents','lms_children','lms_subjects','lms_report_templates','lms_schedules','lms_schedule_subjects','lms_attendance','lms_lesson_reports','lms_comments','lms_invoices','lms_payment_transactions','lms_media_assets') order by tablename",
   );
-  assert.equal(schema.length, 12);
+  assert.equal(schema.length, 13);
   assert.ok(schema.every((row) => row.rowsecurity));
-  pass("12 exposed tables have RLS");
+  pass("13 exposed tables have RLS");
   const indexes = await query(
     "select count(*)::integer count from pg_indexes where schemaname='public' and tablename in ('lms_children','lms_schedules','lms_attendance','lms_lesson_reports','lms_invoices','lms_comments','lms_media_assets')",
   );
@@ -211,6 +211,9 @@ try {
   const parentId = randomUUID();
   childId = randomUUID();
   const subjectId = randomUUID();
+  const secondSubjectId = randomUUID();
+  const thirdSubjectId = randomUUID();
+  const foreignSubjectId = randomUUID();
   const templateId = randomUUID();
   const scheduleId = randomUUID();
   const reportId = randomUUID();
@@ -238,6 +241,18 @@ try {
     p_table: "lms_subjects",
     p_data: { id: subjectId, name: "Validation subject" },
   });
+  for (const [id, name] of [
+    [secondSubjectId, "Validation English"],
+    [thirdSubjectId, "Validation Science"],
+  ])
+    await rpc(clientA, "lms_save_record", {
+      p_table: "lms_subjects",
+      p_data: { id, name },
+    });
+  await rpc(clientB, "lms_save_record", {
+    p_table: "lms_subjects",
+    p_data: { id: foreignSubjectId, name: "Foreign subject" },
+  });
   await rpc(clientA, "lms_save_record", {
     p_table: "lms_report_templates",
     p_data: {
@@ -253,13 +268,25 @@ try {
     p_data: {
       id: scheduleId,
       child_id: childId,
-      subject_id: subjectId,
+      subject_ids: [subjectId, secondSubjectId],
       day_of_week: 3,
       start_time: "09:00",
       end_time: "10:00",
       location: "Validation",
     },
   });
+  const scheduleSelect =
+    "*,schedule_subjects:lms_schedule_subjects!lms_schedule_subjects_owner_id_schedule_id_fkey(subject:lms_subjects!lms_schedule_subjects_owner_id_subject_id_fkey(id,name,is_active))";
+  const getSchedule = () =>
+    result(
+      clientA
+        .from("lms_schedules")
+        .select(scheduleSelect)
+        .eq("id", scheduleId)
+        .single(),
+    );
+  assert.equal((await getSchedule()).schedule_subjects.length, 2);
+  pass("create schedule with two subjects and nested PostgREST join");
   const att = {
     id: randomUUID(),
     child_id: childId,
@@ -338,6 +365,64 @@ try {
     0,
   );
   pass("CRUD updates and versioned deletion");
+  const beforeSubjectEdit = await getSchedule();
+  await rpc(clientA, "lms_save_schedule", {
+    p_data: { id: scheduleId, subject_ids: [secondSubjectId, thirdSubjectId] },
+    p_version: beforeSubjectEdit.version,
+  });
+  const editedSchedule = await getSchedule();
+  assert.deepEqual(
+    editedSchedule.schedule_subjects.map((item) => item.subject.id).sort(),
+    [secondSubjectId, thirdSubjectId].sort(),
+  );
+  for (const [subjects, code] of [
+    [[subjectId, subjectId], "23505"],
+    [[], "23514"],
+    [[foreignSubjectId], "42501"],
+  ]) {
+    const invalid = await clientA.rpc("lms_save_schedule", {
+      p_data: { id: scheduleId, subject_ids: subjects },
+      p_version: editedSchedule.version,
+    });
+    assert.equal(invalid.error?.code, code);
+    assert.equal((await getSchedule()).version, editedSchedule.version);
+  }
+  assert.equal(
+    (
+      await result(
+        clientB
+          .from("lms_schedule_subjects")
+          .select("schedule_id")
+          .eq("schedule_id", scheduleId),
+      )
+    ).length,
+    0,
+  );
+  assert.ok(
+    (
+      await clientA
+        .from("lms_schedule_subjects")
+        .insert({
+          schedule_id: scheduleId,
+          subject_id: foreignSubjectId,
+          owner_id: ownerIds[0],
+        })
+    ).error,
+  );
+  assert.equal(
+    (
+      await result(
+        clientA
+          .from("lms_attendance")
+          .select("id")
+          .eq("schedule_id", scheduleId),
+      )
+    ).length,
+    1,
+  );
+  pass(
+    "atomic subject edit, duplicate/empty/cross-owner rejection, relation RLS and one attendance",
+  );
   const scheduleRaces = await Promise.all(
     [
       { start_time: "10:00", end_time: "11:00" },
@@ -348,7 +433,7 @@ try {
         p_data: {
           id: randomUUID(),
           child_id: childId,
-          subject_id: subjectId,
+          subject_ids: [subjectId, thirdSubjectId],
           day_of_week: 4,
           location: "Conflict validation",
           ...slot,
@@ -695,6 +780,43 @@ try {
     403,
   );
   pass("parent report scope and private photos");
+  const childLink = await edge(
+    { action: "issue-link", childId, days: 1 },
+    sessionA,
+  );
+  assert.equal(childLink.status, 200);
+  const parentSchedules = await edge({
+    action: "parent",
+    token: childLink.data.token,
+    section: "schedules",
+  });
+  assert.equal(parentSchedules.status, 200);
+  assert.deepEqual(
+    parentSchedules.data.items
+      .find((item) => item.id === scheduleId)
+      .subjects.map((item) => item.id)
+      .sort(),
+    [secondSubjectId, thirdSubjectId].sort(),
+  );
+  pass("Edge parent schedule returns all subjects once per schedule");
+  // Restore the report-scoped token expected by the remaining regression checks.
+  const restoredLink = await edge(
+    { action: "issue-link", childId, reportId, days: 1 },
+    sessionA,
+  );
+  assert.equal(restoredLink.status, 200);
+  issued.data.token = restoredLink.data.token;
+  assert.equal(
+    (
+      await edge({
+        action: "parent",
+        token: issued.data.token,
+        operation: "open",
+        section: "reports",
+      })
+    ).status,
+    200,
+  );
   const parentComment = {
     action: "parent",
     token: issued.data.token,

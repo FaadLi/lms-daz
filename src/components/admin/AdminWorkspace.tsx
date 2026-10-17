@@ -1,3 +1,4 @@
+import { scheduleSubjectsLabel } from "../../utils/schedules";
 import { useState, useEffect } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { Row, Entity } from "../../types";
@@ -282,7 +283,7 @@ function Dashboard({
                   key={row.id}
                   className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs"
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     <span className="px-2 py-1 rounded-md bg-indigo-50 text-indigo-700 font-bold text-2xs border border-indigo-100">
                       {DAY_NAMES[Number(row.day_of_week)]}
                     </span>
@@ -290,8 +291,8 @@ function Dashboard({
                       <strong className="text-slate-800">
                         {text(row, "child.full_name") || "Murid"}
                       </strong>
-                      <span className="text-slate-400 ml-1.5">
-                        · {text(row, "subject.name")}
+                      <span className="text-slate-400 ml-1.5 break-words">
+                        · {scheduleSubjectsLabel(row)}
                       </span>
                     </div>
                   </div>

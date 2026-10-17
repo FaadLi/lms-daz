@@ -1,5 +1,6 @@
 import { client } from "./supabase";
 import type { Row, Page, Entity, Table } from "../types";
+import { scheduleRow } from "../utils/schedules";
 
 export const PAGE_SIZE = 20;
 export function tableName(entity: Entity): Table {
@@ -8,7 +9,7 @@ export function tableName(entity: Entity): Table {
 const joins: Partial<Record<Entity, string>> = {
   children: "*,parent:lms_parents!lms_children_owner_id_parent_id_fkey(*)",
   schedules:
-    "*,child:lms_children!lms_schedules_owner_id_child_id_fkey(full_name,nickname),subject:lms_subjects!lms_schedules_owner_id_subject_id_fkey(name)",
+    "*,child:lms_children!lms_schedules_owner_id_child_id_fkey(full_name,nickname),schedule_subjects:lms_schedule_subjects!lms_schedule_subjects_owner_id_schedule_id_fkey(subject:lms_subjects!lms_schedule_subjects_owner_id_subject_id_fkey(id,name,is_active))",
   attendance:
     "*,child:lms_children!lms_attendance_owner_id_child_id_fkey(full_name,nickname)",
   lesson_reports:
@@ -76,7 +77,11 @@ export async function list(
     .order("id")
     .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
   if (error) throw error;
-  return { items: (data || []) as unknown as Row[], total: count || 0 };
+  const items = (data || []) as unknown as Row[];
+  return {
+    items: table === "schedules" ? items.map(scheduleRow) : items,
+    total: count || 0,
+  };
 }
 export async function get(table: Entity, id: string): Promise<Row> {
   const { data, error } = await client()
@@ -85,7 +90,8 @@ export async function get(table: Entity, id: string): Promise<Row> {
     .eq("id", id)
     .single();
   if (error) throw error;
-  return data as unknown as Row;
+  const row = data as unknown as Row;
+  return table === "schedules" ? scheduleRow(row) : row;
 }
 export const db = {
   list,
@@ -95,11 +101,16 @@ export const db = {
     data: Record<string, unknown>,
     version: number | null = null,
   ) =>
-    call<Row>("lms_save_record", {
-      p_table: tableName(table),
-      p_data: data,
-      p_version: version,
-    }),
+    table === "schedules"
+      ? call<Row>("lms_save_schedule", {
+          p_data: data,
+          p_version: version,
+        })
+      : call<Row>("lms_save_record", {
+          p_table: tableName(table),
+          p_data: data,
+          p_version: version,
+        }),
   createChild: (
     child: Record<string, unknown>,
     parent: Record<string, unknown> | null,

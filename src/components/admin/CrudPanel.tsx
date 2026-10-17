@@ -1,3 +1,4 @@
+import { scheduleSubjectsLabel } from "../../utils/schedules";
 import { useState } from "react";
 import type { Row, Entity, PaymentStatus } from "../../types";
 import { db } from "../../services/db";
@@ -222,7 +223,7 @@ export function RowDetails({ row, table }: { row: Row; table: Entity }) {
     const day = DAY_NAMES[Number(row.day_of_week)] || "Hari";
     return (
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-100 text-xs font-bold text-indigo-700">
               {day}
@@ -231,8 +232,8 @@ export function RowDetails({ row, table }: { row: Row; table: Entity }) {
               {text(row, "child.nickname") || text(row, "child.full_name")}
             </h4>
           </div>
-          <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">
-            {text(row, "subject.name")}
+          <span className="max-w-full break-words text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">
+            {scheduleSubjectsLabel(row)}
           </span>
         </div>
 

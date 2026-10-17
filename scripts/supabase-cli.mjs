@@ -38,6 +38,7 @@ config.SUPABASE_PROJECT_REF = ref;
 const commands = {
   link: ["link", "--project-ref", ref],
   push: ["db", "push", "--yes"],
+  plan: ["db", "push", "--dry-run"],
   deploy: ["functions", "deploy", "lesreport", "--project-ref", ref],
   origins: [
     "secrets",
@@ -49,7 +50,7 @@ const commands = {
 };
 const action = process.argv[2];
 if (!commands[action]) {
-  console.error("Use link, push, origins or deploy");
+  console.error("Use link, plan, push, origins or deploy");
   process.exit(1);
 }
 const args = ["--no-install", "supabase", ...commands[action]];

@@ -3,6 +3,10 @@ import type { Field, Row } from "../../types";
 import { db, PAGE_SIZE } from "../../services/db";
 import { useMutation, useQuery } from "../../services/hooks";
 import {
+  scheduleSubjectsLabel,
+  type ScheduleSubject,
+} from "../../utils/schedules";
+import {
   AlertCircle,
   Loader2,
   ChevronLeft,
@@ -175,12 +179,116 @@ function ReferenceInput({
           <option key={row.id} value={row.id}>
             {text(row, "name") ||
               text(row, "full_name") ||
-              `${text(row, "date")} ${text(row, "topic") || text(row, "start_time")}`}
+              (field.reference === "schedules"
+                ? `${text(row, "start_time")} · ${scheduleSubjectsLabel(row)}`
+                : `${text(row, "date")} ${text(row, "topic") || text(row, "start_time")}`)}
           </option>
         ))}
       </select>
       <small className="block text-2xs text-slate-400">
         Pilih salah satu referensi yang tersedia.
+      </small>
+    </div>
+  );
+}
+
+function SubjectMultiInput({
+  field,
+  value,
+  selectedSubjects,
+  onChange,
+}: {
+  field: Field;
+  value: string[];
+  selectedSubjects: ScheduleSubject[];
+  onChange: (value: string[]) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [term, setTerm] = useState("");
+  const [page, setPage] = useState(0);
+  const [known, setKnown] = useState(selectedSubjects);
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setTerm(search);
+      setPage(0);
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [search]);
+  const query = useQuery(`schedule-subjects:${term}:${page}`, () =>
+    db.list("subjects", {
+      search: term,
+      searchColumn: "name",
+      activeOnly: true,
+      page,
+    }),
+  );
+  return (
+    <div className="space-y-1.5 mt-1">
+      <div className="flex flex-wrap gap-1.5">
+        {value.map((id) => {
+          const subject = known.find((item) => item.id === id);
+          return (
+            <span
+              key={id}
+              className="inline-flex max-w-full items-center gap-1 rounded-lg border border-indigo-100 bg-indigo-50 px-2 py-1 text-xs text-indigo-700"
+            >
+              <span className="min-w-0 break-words">
+                {subject?.name || "Mata pelajaran tersimpan"}
+                {subject?.is_active === false ? " (nonaktif)" : ""}
+              </span>
+              <button
+                type="button"
+                aria-label={`Hapus ${subject?.name || "mata pelajaran"}`}
+                onClick={() => onChange(value.filter((item) => item !== id))}
+                className="shrink-0 rounded p-0.5 hover:bg-indigo-100 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </span>
+          );
+        })}
+      </div>
+      <div className="relative">
+        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <input
+          aria-label={`Cari ${field.label}`}
+          placeholder="Cari mata pelajaran aktif…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full rounded-xl border border-slate-200 pl-9 pr-3 py-2 text-xs text-slate-900 bg-slate-50/50 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+        />
+      </div>
+      <ErrorNotice message={query.error} />
+      <select
+        aria-label="Tambah mata pelajaran"
+        required={field.required && value.length === 0}
+        value=""
+        onChange={(e) => {
+          const id = e.target.value;
+          const subject = query.data?.items.find((item) => item.id === id);
+          if (!subject || value.includes(id)) return;
+          setKnown((items) => [
+            ...items.filter((item) => item.id !== id),
+            { id, name: String(subject.name), is_active: true },
+          ]);
+          onChange([...value, id]);
+        }}
+        disabled={query.loading || !!query.error}
+        className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100"
+      >
+        <option value="">Pilih mata pelajaran untuk ditambahkan</option>
+        {query.data?.items
+          .filter((item) => !value.includes(item.id))
+          .map((item) => (
+            <option key={item.id} value={item.id}>
+              {String(item.name)}
+            </option>
+          ))}
+      </select>
+      <Pager page={page} total={query.data?.total || 0} onPage={setPage} />
+      <small className="block text-2xs text-slate-400">
+        Pilih minimal satu mata pelajaran. Pilihan nonaktif tersimpan dapat
+        dihapus.
       </small>
     </div>
   );
@@ -206,7 +314,8 @@ export function RecordForm({
     Object.fromEntries(
       fields.map((field) => [
         field.name,
-        initial?.[field.name] ?? (field.type === "checkbox" ? false : ""),
+        initial?.[field.name] ??
+          (field.multiple ? [] : field.type === "checkbox" ? false : ""),
       ]),
     ),
   );
@@ -266,7 +375,22 @@ export function RecordForm({
                 ];
               }),
             );
-            if (await mutation.run(() => onSave(payload, id))) onClose();
+            if (
+              await mutation.run(() => {
+                if (
+                  fields.some(
+                    (field) =>
+                      field.multiple &&
+                      field.required &&
+                      (!Array.isArray(payload[field.name]) ||
+                        !(payload[field.name] as unknown[]).length),
+                  )
+                )
+                  throw new Error("Pilih minimal satu mata pelajaran.");
+                return onSave(payload, id);
+              })
+            )
+              onClose();
           }}
         >
           <fieldset disabled={mutation.pending} className="space-y-4">
@@ -281,7 +405,16 @@ export function RecordForm({
                     <span className="text-rose-500 ml-0.5">*</span>
                   )}
                 </label>
-                {field.type === "reference" ? (
+                {field.multiple ? (
+                  <SubjectMultiInput
+                    field={field}
+                    value={values[field.name] as string[]}
+                    selectedSubjects={
+                      (initial?.subjects || []) as ScheduleSubject[]
+                    }
+                    onChange={(value) => set(field.name, value)}
+                  />
+                ) : field.type === "reference" ? (
                   <ReferenceInput
                     field={{
                       ...field,

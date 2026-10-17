@@ -39,6 +39,7 @@ export interface Field {
     | "checkbox"
     | "select"
     | "reference";
+  multiple?: boolean;
   required?: boolean;
   min?: number;
   max?: number;

@@ -99,9 +99,364 @@ beforeAll(async () => {
     "lms_save_record",
     `'lms_subjects',${j({ id: subject, name: "Test subject" })}`,
   );
+  // Seed using the old schema so the new migration really exercises backfill.
+  await rpc(
+    "lms_save_record",
+    `'lms_schedules',${j({
+      id: "10000000-0000-4000-8000-000000000001",
+      child_id: child,
+      subject_id: subject,
+      day_of_week: 0,
+      start_time: "08:00",
+      end_time: "09:00",
+      location: "Legacy",
+      is_active: false,
+    })}`,
+  );
+  await db.exec("reset role");
+  await db.exec(
+    readFileSync(
+      "supabase/migrations/202610170011_schedule_subjects.sql",
+      "utf8",
+    ),
+  );
+  await asUser(a);
 }, 30000);
 afterAll(async () => {
   await db?.close();
+});
+
+describe("multi-subject schedules", () => {
+  const second = "20000000-0000-4000-8000-000000000002";
+  const third = "20000000-0000-4000-8000-000000000003";
+  const foreign = "20000000-0000-4000-8000-000000000004";
+  const inactive = "20000000-0000-4000-8000-000000000005";
+  const schedule = "10000000-0000-4000-8000-000000000002";
+  const values = (id = schedule, subjects = [subject, second]) => ({
+    id,
+    child_id: child,
+    subject_ids: subjects,
+    day_of_week: 1,
+    start_time: "09:00",
+    end_time: "10:00",
+    location: "Classroom",
+    is_active: false,
+  });
+  const save = (data: object, version?: number) =>
+    rpc("lms_save_schedule", `${j(data)},${version ?? "null"}`);
+  const subjectsFor = async (id: string) =>
+    (
+      await db.query<{ subject_id: string }>(
+        `select subject_id from public.lms_schedule_subjects where schedule_id='${id}' order by subject_id`,
+      )
+    ).rows.map((row) => row.subject_id);
+
+  it("preserves legacy schedule ID, version and subject after backfill", async () => {
+    await asUser(a);
+    expect(await subjectsFor("10000000-0000-4000-8000-000000000001")).toEqual([
+      subject,
+    ]);
+    expect(
+      (
+        await db.query(
+          "select location,version from public.lms_schedules where location='Legacy'",
+        )
+      ).rows,
+    ).toEqual([{ location: "Legacy", version: 1 }]);
+    expect(
+      (
+        await db.query(
+          "select column_name from information_schema.columns where table_name='lms_schedules' and column_name='subject_id'",
+        )
+      ).rows,
+    ).toHaveLength(0);
+  });
+
+  it("creates one schedule with multiple subjects and supports identical retries", async () => {
+    await asUser(a);
+    for (const [id, name, active] of [
+      [second, "English", true],
+      [third, "Science", true],
+      [inactive, "Inactive", false],
+    ] as const)
+      await rpc(
+        "lms_save_record",
+        `'lms_subjects',${j({ id, name, is_active: active })}`,
+      );
+    await asUser(b);
+    await rpc(
+      "lms_save_record",
+      `'lms_subjects',${j({ id: foreign, name: "Foreign" })}`,
+    );
+    await asUser(a);
+    await save(values());
+    await save(values(schedule, [second, subject]));
+    expect(await subjectsFor(schedule)).toEqual([second, subject]);
+    expect(
+      (
+        await db.query(
+          `select version from public.lms_schedules where id='${schedule}'`,
+        )
+      ).rows,
+    ).toEqual([{ version: 1 }]);
+    await expect(
+      save({ ...values(), location: "Changed retry" }),
+    ).rejects.toMatchObject({ code: "PT409" });
+  });
+
+  it("adds and removes subjects in one versioned edit and rejects stale edits", async () => {
+    await save({ id: schedule, subject_ids: [second, third] }, 1);
+    expect(await subjectsFor(schedule)).toEqual([second, third]);
+    await expect(
+      save({ id: schedule, subject_ids: [subject] }, 1),
+    ).rejects.toMatchObject({ code: "PT409" });
+    expect(await subjectsFor(schedule)).toEqual([second, third]);
+    // Generic callers also use the atomic boundary; patch-only edits retain subjects.
+    await rpc(
+      "lms_save_record",
+      `'lms_schedules',${j({ id: schedule, notes: "Updated" })},2`,
+    );
+    expect(await subjectsFor(schedule)).toEqual([second, third]);
+  });
+
+  it("rejects duplicate, empty, null, missing, inactive and foreign subjects without persisting", async () => {
+    for (const ids of [
+      [subject, subject],
+      [],
+      [foreign],
+      [inactive],
+      [crypto.randomUUID()],
+      [null],
+    ]) {
+      const id = crypto.randomUUID();
+      await expect(save({ ...values(id), subject_ids: ids })).rejects.toThrow();
+      expect(
+        (await db.query(`select id from public.lms_schedules where id='${id}'`))
+          .rows,
+      ).toHaveLength(0);
+    }
+    await expect(
+      save({ id: schedule, subject_ids: [subject, subject] }, 3),
+    ).rejects.toMatchObject({ code: "23505" });
+    await expect(
+      save({ id: schedule, subject_ids: [] }, 3),
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      save({ id: schedule, subject_ids: [foreign] }, 3),
+    ).rejects.toMatchObject({ code: "42501" });
+    expect(await subjectsFor(schedule)).toEqual([second, third]);
+  });
+
+  it("enforces RLS, composite ownership FKs and RPC-only writes", async () => {
+    await asUser(b);
+    expect(await subjectsFor(schedule)).toEqual([]);
+    await expect(
+      save({ id: schedule, subject_ids: [foreign] }, 3),
+    ).rejects.toMatchObject({ code: "42501" });
+    await expect(
+      db.exec(
+        `insert into public.lms_schedule_subjects values('${schedule}','${foreign}','${b}',now())`,
+      ),
+    ).rejects.toThrow();
+    await db.exec("reset role");
+    await expect(
+      db.exec(
+        `insert into public.lms_schedule_subjects values('${schedule}','${foreign}','${a}',now())`,
+      ),
+    ).rejects.toMatchObject({ code: "23503" });
+    await asUser(a);
+    await expect(
+      db.exec(
+        `insert into public.lms_schedules(id,child_id,day_of_week,start_time,end_time,location) values(gen_random_uuid(),'${child}',5,'09:00','10:00','Bypass')`,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      db.exec(
+        `delete from public.lms_schedule_subjects where schedule_id='${schedule}'`,
+      ),
+    ).rejects.toThrow();
+    await db.exec("reset role; set role anon");
+    await expect(save(values(crypto.randomUUID()))).rejects.toThrow();
+    await expect(
+      db.query("select * from public.lms_schedule_subjects"),
+    ).rejects.toThrow();
+    await asUser(a);
+  });
+
+  it("rolls back schedule and relation edits if the relation insert fails", async () => {
+    await db.exec(`reset role;
+      create function private.fail_schedule_subject_test() returns trigger language plpgsql as $$ begin
+        if new.subject_id='${subject}' then raise exception 'Simulated relation failure'; end if; return new;
+      end $$;
+      create trigger fail_schedule_subject_test before insert on public.lms_schedule_subjects for each row execute function private.fail_schedule_subject_test();`);
+    try {
+      await asUser(a);
+      const id = crypto.randomUUID();
+      await expect(save(values(id))).rejects.toThrow(
+        /Simulated relation failure/,
+      );
+      expect(
+        (await db.query(`select id from public.lms_schedules where id='${id}'`))
+          .rows,
+      ).toHaveLength(0);
+      await expect(
+        save(
+          { id: schedule, subject_ids: [subject], location: "Must roll back" },
+          3,
+        ),
+      ).rejects.toThrow(/Simulated relation failure/);
+      expect(await subjectsFor(schedule)).toEqual([second, third]);
+      expect(
+        (
+          await db.query(
+            `select location,version from public.lms_schedules where id='${schedule}'`,
+          )
+        ).rows,
+      ).toEqual([{ location: "Classroom", version: 3 }]);
+    } finally {
+      await db.exec(
+        "reset role; drop trigger fail_schedule_subject_test on public.lms_schedule_subjects; drop function private.fail_schedule_subject_test();",
+      );
+      await asUser(a);
+    }
+  });
+
+  it("keeps existing inactive subjects for edits, but prevents adding them again", async () => {
+    await rpc(
+      "lms_save_record",
+      `'lms_subjects',${j({ id: second, is_active: false })},1`,
+    );
+    await save(
+      { id: schedule, subject_ids: [second, third], location: "Historical" },
+      3,
+    );
+    await save({ id: schedule, subject_ids: [third] }, 4);
+    await expect(
+      save({ id: schedule, subject_ids: [second, third] }, 5),
+    ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("preserves overlap protection independent of subject selection", async () => {
+    const id = crypto.randomUUID();
+    await save({
+      ...values(id, [subject, third]),
+      is_active: true,
+      day_of_week: 6,
+    });
+    await expect(
+      save({
+        ...values(crypto.randomUUID(), [third]),
+        is_active: true,
+        day_of_week: 6,
+        start_time: "09:30",
+        end_time: "10:30",
+      }),
+    ).rejects.toMatchObject({ code: "23505" });
+    await expect(
+      save({ id: schedule, is_active: true, day_of_week: 6 }, 5),
+    ).rejects.toMatchObject({ code: "23505" });
+    await save({
+      ...values(crypto.randomUUID(), [third]),
+      is_active: true,
+      day_of_week: 6,
+      start_time: "10:00",
+      end_time: "11:00",
+    });
+  });
+
+  it("keeps one attendance and one single-subject report per schedule/date", async () => {
+    const att = {
+      id: crypto.randomUUID(),
+      child_id: child,
+      schedule_id: schedule,
+      date: "2026-10-17",
+      start_time: "09:00",
+      end_time: "10:00",
+      status: "hadir",
+    };
+    await rpc("lms_save_record", `'lms_attendance',${j(att)}`);
+    await expect(
+      rpc(
+        "lms_save_record",
+        `'lms_attendance',${j({ ...att, id: crypto.randomUUID(), start_time: "09:30" })}`,
+      ),
+    ).rejects.toMatchObject({ code: "23505" });
+    const report = {
+      id: crypto.randomUUID(),
+      child_id: child,
+      schedule_id: schedule,
+      subject_id: subject,
+      date: att.date,
+      duration_minutes: 60,
+      topic: "Topic",
+      what_learned: "Material",
+      learning_outcome: "Observed",
+      score: 80,
+    };
+    await rpc("lms_save_record", `'lms_lesson_reports',${j(report)}`);
+    expect(
+      (
+        await db.query(
+          `select id from public.lms_attendance where schedule_id='${schedule}'`,
+        )
+      ).rows,
+    ).toHaveLength(1);
+    expect(
+      (
+        await db.query(
+          `select subject_id from public.lms_lesson_reports where schedule_id='${schedule}'`,
+        )
+      ).rows,
+    ).toEqual([{ subject_id: subject }]);
+  });
+
+  it("returns all subjects via the scoped parent query without multiplying schedules", async () => {
+    await save(
+      {
+        id: schedule,
+        subject_ids: [subject, third],
+        is_active: true,
+        day_of_week: 2,
+      },
+      5,
+    );
+    await db.exec("reset role");
+    const hash = "c".repeat(64);
+    await rpc(
+      "lms_issue_report_link",
+      `'${a}','${child}',null,'${hash}',now()+interval '1 hour'`,
+    );
+    const response = (
+      await rpc("lms_parent_request", `'${hash}','read','schedules'`)
+    ).rows[0].value as { items: { id: string; subjects: { id: string }[] }[] };
+    expect(response.items.filter((item) => item.id === schedule)).toHaveLength(
+      1,
+    );
+    expect(
+      response.items
+        .find((item) => item.id === schedule)
+        ?.subjects.map((item) => item.id)
+        .sort(),
+    ).toEqual([subject, third].sort());
+    await asUser(a);
+  });
+
+  it("enforces minimum membership even for privileged writes and cascades safe deletion", async () => {
+    await db.exec("reset role");
+    await expect(
+      db.exec(
+        `delete from public.lms_schedule_subjects where schedule_id='${schedule}'`,
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    const id = crypto.randomUUID();
+    await asUser(a);
+    await save(values(id, [subject]));
+    await rpc("lms_delete_record", `'lms_schedules','${id}',1`);
+    expect(await subjectsFor(id)).toEqual([]);
+    await expect(
+      rpc("lms_delete_record", `'lms_schedules','${schedule}',6`),
+    ).rejects.toThrow();
+  });
 });
 
 describe("PostgreSQL ownership and validation", () => {
@@ -251,7 +606,7 @@ describe("PostgreSQL ownership and validation", () => {
     expect(
       (
         await db.query<{ access_count: number }>(
-          "select access_count from private.lms_report_links",
+          `select access_count from private.lms_report_links where token_hash='${hash}'`,
         )
       ).rows[0].access_count,
     ).toBe(1);
