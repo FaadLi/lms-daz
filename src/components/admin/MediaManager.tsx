@@ -2,6 +2,8 @@ import { useState } from "react";
 import type { Row } from "../../types";
 import { db, edge, signedMedia, upload } from "../../services/db";
 import { useMutation, useQuery } from "../../services/hooks";
+import { useDraft } from "../../services/useDraft";
+import { DraftNotice } from "../common/DraftNotice";
 import { ErrorNotice, Pager, QueryState, text } from "../common/DataUI";
 import {
   Camera,
@@ -60,7 +62,8 @@ export function MediaManager({
   onChanged: () => void;
 }) {
   const [page, setPage] = useState(0);
-  const [caption, setCaption] = useState("");
+  const draft = useDraft({ form: `media-caption/${kind}/${target.id}`, schema: "caption-v1", defaults: { caption: "" }, enabled: kind === "photo" });
+  const caption = String(draft.values.caption);
   const [notice, setNotice] = useState("");
   const mutation = useMutation();
 
@@ -110,7 +113,7 @@ export function MediaManager({
             aria-label="Caption foto"
             value={caption}
             placeholder="Contoh: Belajar berhitung dengan balok angka…"
-            onChange={(e) => setCaption(e.target.value)}
+            onChange={(e) => draft.set({ caption: e.target.value })}
             maxLength={500}
             className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-xs text-slate-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-colors shadow-2xs"
           />
@@ -118,6 +121,7 @@ export function MediaManager({
       )}
 
       {/* Upload button box */}
+      {kind === "photo" && <DraftNotice draft={draft} />}
       <div className="flex flex-col sm:flex-row items-center gap-3">
         <label className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl transition-colors cursor-pointer shadow-2xs">
           <Upload className="w-4 h-4" />
@@ -139,7 +143,7 @@ export function MediaManager({
                       ? "Foto tersimpan. Pembersihan file lama dijadwalkan."
                       : "Foto berhasil diunggah!",
                   );
-                  setCaption("");
+                  draft.clear();
                   refresh();
                 });
               e.target.value = "";

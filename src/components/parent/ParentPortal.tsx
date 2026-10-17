@@ -1,5 +1,7 @@
 import { scheduleSubjectsLabel } from "../../utils/schedules";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { DraftProvider, useDraft } from "../../services/useDraft";
+import { DraftNotice } from "../common/DraftNotice";
 import type { Row } from "../../types";
 import { edge } from "../../services/db";
 import { useMutation, useQuery } from "../../services/hooks";
@@ -38,11 +40,23 @@ interface PortalData {
 }
 
 export function ParentPortal({ token }: { token: string }) {
+  const [scope, setScope] = useState("");
+  useEffect(() => {
+    let active = true;
+    crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)).then((digest) => {
+      if (active) setScope(`parent.${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`);
+    }).catch(() => { if (active) setScope("unpersisted-parent"); });
+    return () => { active = false; };
+  }, [token]);
+  if (!scope) return <main className="p-6 text-sm text-slate-500" role="status">Memulihkan draft...</main>;
+  return <DraftProvider userId={scope === "unpersisted-parent" ? "" : scope}><ParentPortalContent token={token} /></DraftProvider>;
+}
+function ParentPortalContent({ token }: { token: string }) {
   const [section, setSection] = useState("reports");
   const [page, setPage] = useState(0);
   const [opened, setOpened] = useState(false);
-  const [message, setMessage] = useState("");
-  const [commentId, setCommentId] = useState(() => crypto.randomUUID());
+  const draft = useDraft({ form: "parent-comments", schema: "message-v1", defaults: { message: "" } });
+  const message = String(draft.values.message);
   const mutation = useMutation();
 
   const query = useQuery(`parent:${token}:${section}:${page}`, async () => {
@@ -442,17 +456,17 @@ export function ParentPortal({ token }: { token: string }) {
                     e.preventDefault();
                     if (!message.trim()) return;
                     void mutation.run(async () => {
+                      draft.flush();
                       await edge({
                         action: "parent",
                         token,
                         operation: "comment",
                         section: "comments",
-                        id: commentId,
+                        id: draft.operationId,
                         message,
                         reportId: data.report_id,
                       });
-                      setMessage("");
-                      setCommentId(crypto.randomUUID());
+                      draft.clear();
                       query.refresh();
                     });
                   }}
@@ -468,9 +482,10 @@ export function ParentPortal({ token }: { token: string }) {
                     placeholder="Contoh: Terima kasih Bu/Pak, di rumah ananda sudah mulai bisa membaca kata-kata sulit…"
                     value={message}
                     disabled={mutation.pending}
-                    onChange={(e) => setMessage(e.target.value)}
+                    onChange={(e) => draft.set({ message: e.target.value })}
                     className="w-full rounded-2xl border border-slate-200 p-3 text-xs text-slate-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-colors shadow-2xs resize-none"
                   />
+                  <DraftNotice draft={draft} />
                   <div className="flex items-center justify-between">
                     <span className="text-2xs text-slate-400">
                       Pesan akan langsung terbaca oleh guru pengajar.

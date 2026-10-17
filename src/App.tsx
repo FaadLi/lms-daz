@@ -6,6 +6,7 @@ import { LoginView } from "./components/auth/LoginView";
 import { AdminWorkspace } from "./components/admin/AdminWorkspace";
 import { ParentPortal } from "./components/parent/ParentPortal";
 import { ErrorNotice } from "./components/common/DataUI";
+import { DraftProvider } from "./services/useDraft";
 
 function route() {
   const hash = window.location.hash.slice(1) || "/dashboard";
@@ -116,10 +117,12 @@ export default function App() {
     );
   if (!session) return <LoginView />;
   return (
-    <AdminWorkspace
-      key={session.user.id}
-      user={session.user}
-      path={current.hash}
-    />
+    <DraftProvider key={session.user.id} userId={session.user.id}>
+      <AdminWorkspace
+        key={session.user.id}
+        user={session.user}
+        path={current.hash}
+      />
+    </DraftProvider>
   );
 }

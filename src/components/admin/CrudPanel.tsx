@@ -2,6 +2,7 @@ import { scheduleSubjectsLabel } from "../../utils/schedules";
 import { useState } from "react";
 import type { Row, Entity, PaymentStatus } from "../../types";
 import { db } from "../../services/db";
+import { useDraft } from "../../services/useDraft";
 import { useMutation, useQuery } from "../../services/hooks";
 import {
   fields,
@@ -404,9 +405,10 @@ export function CrudPanel({
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Row | null | undefined>();
   const [paying, setPaying] = useState<Row | null>(null);
-  const [newParent, setNewParent] = useState(false);
+  const parentDraft = useDraft({ form: "children-options", schema: "new-parent-v1", defaults: { newParent: false }, enabled: table === "children" });
+  const newParent = !!parentDraft.values.newParent;
   const [paymentKey, setPaymentKey] = useState("");
-  const [parentId, setParentId] = useState(() => crypto.randomUUID());
+  const parentId = parentDraft.operationId;
   const [deleting, setDeleting] = useState<Row | null>(null);
   const [history, setHistory] = useState<Row | null>(null);
   const mutation = useMutation();
@@ -455,8 +457,6 @@ export function CrudPanel({
           <button
             type="button"
             onClick={() => {
-              setNewParent(false);
-              setParentId(crypto.randomUUID());
               setEditing(null);
             }}
             className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition-colors cursor-pointer"
@@ -593,6 +593,7 @@ export function CrudPanel({
         <RecordForm
           key={`${editing?.id || "new"}:${newParent}`}
           title={`${editing ? "Edit" : "Tambah"} ${title}`}
+          draft={{ form: table === "children" && !editing && newParent ? "children-with-parent" : table, scope: editing ? undefined : childId, loadLatest: editing ? () => db.get(table, editing.id) : undefined }}
           initial={editing || undefined}
           tools={
             editing === null && table === "children"
@@ -601,7 +602,7 @@ export function CrudPanel({
                     <input
                       type="checkbox"
                       checked={newParent}
-                      onChange={(e) => setNewParent(e.target.checked)}
+                      onChange={(e) => parentDraft.set({ newParent: e.target.checked })}
                       className="w-4 h-4 rounded text-indigo-600"
                     />
                     Buat data wali baru bersamaan dengan murid ini
@@ -624,7 +625,7 @@ export function CrudPanel({
               : formFields
           }
           onClose={() => setEditing(undefined)}
-          onSave={async (values, id) => {
+          onSave={async (values, id, meta) => {
             let payload: Record<string, unknown> = {
               ...values,
               id,
@@ -658,8 +659,9 @@ export function CrudPanel({
                 payload.whatsapp_number = cleanWhatsappNumber(
                   String(payload.whatsapp_number),
                 );
-              await db.save(table, payload, editing?.version ?? null);
+              await db.save(table, payload, meta.version ?? null);
             }
+            if (table === "children" && !editing && !parentDraft.clear()) throw new Error("Data tersimpan, tetapi draft opsi wali belum dapat dibersihkan.");
             refresh();
           }}
         />
@@ -670,10 +672,11 @@ export function CrudPanel({
         <RecordForm
           key={paymentKey}
           title={`Catat Pembayaran: ${text(paying, "invoice_number")}`}
+          draft={{ form: "payments", scope: paying.id }}
           fields={paymentFields}
           onClose={() => setPaying(null)}
-          onSave={async (values) => {
-            await db.payment(paying, values, paymentKey);
+          onSave={async (values, operationId) => {
+            await db.payment(paying, values, operationId);
             refresh();
           }}
         />

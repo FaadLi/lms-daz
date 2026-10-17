@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage } from "./db";
+import { mutationStarted, mutationFinished, requireOnline } from "./network";
 
 export function useQuery<T>(
   key: string,
@@ -48,13 +49,16 @@ export function useMutation() {
     lock.current = true;
     setPending(true);
     setError("");
+    mutationStarted();
     try {
+      requireOnline();
       await action();
       return true;
     } catch (error) {
       setError(errorMessage(error));
       return false;
     } finally {
+      mutationFinished();
       lock.current = false;
       setPending(false);
     }

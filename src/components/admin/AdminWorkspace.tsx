@@ -455,6 +455,7 @@ export function AdminWorkspace({ user, path }: { user: User; path: string }) {
           {profile.data === null ? (
             <RecordForm
               title="Lengkapi Profil Guru"
+              draft={{ form: "profiles" }}
               fields={profileFields}
               initial={{ id: user.id, version: 0 } as Row}
               onClose={() => void client().auth.signOut()}
@@ -582,14 +583,15 @@ export function AdminWorkspace({ user, path }: { user: User; path: string }) {
         {editing && profile.data && (
           <RecordForm
             title="Edit Profil Guru"
+            draft={{ form: "profiles", loadLatest: () => db.get("profiles", user.id) }}
             fields={profileFields}
             initial={profile.data}
             onClose={() => setEditing(false)}
-            onSave={async (values) => {
+            onSave={async (values, _id, meta) => {
               await db.save(
                 "profiles",
                 { ...values, id: user.id },
-                profile.data!.version,
+                meta.version,
               );
               profile.refresh();
             }}

@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { Row, Entity } from "../../types";
 import { db, edge } from "../../services/db";
+import { useDraft } from "../../services/useDraft";
+import { DraftNotice } from "../common/DraftNotice";
 import { useMutation, useQuery } from "../../services/hooks";
 import { CrudPanel } from "./CrudPanel";
 import { Avatar, MediaManager } from "./MediaManager";
@@ -37,8 +39,8 @@ import {
 
 function Comments({ childId }: { childId: string }) {
   const [page, setPage] = useState(0);
-  const [message, setMessage] = useState("");
-  const [id, setId] = useState(() => crypto.randomUUID());
+  const draft = useDraft({ form: `teacher-comments/${childId}`, schema: "message-v1", defaults: { message: "" } });
+  const message = String(draft.values.message);
   const mutation = useMutation();
   const query = useQuery(`comments:${childId}:${page}`, () =>
     db.list("comments", { childId, page }),
@@ -122,9 +124,9 @@ function Comments({ childId }: { childId: string }) {
           e.preventDefault();
           if (!message.trim()) return;
           void mutation.run(async () => {
-            await db.comment(childId, message, id);
-            setMessage("");
-            setId(crypto.randomUUID());
+            draft.flush();
+            await db.comment(childId, message, draft.operationId);
+            draft.clear();
             query.refresh();
           });
         }}
@@ -140,7 +142,7 @@ function Comments({ childId }: { childId: string }) {
             maxLength={2000}
             rows={2}
             placeholder="Tulis pesan atau tanggapan untuk orang tua…"
-            onChange={(e) => setMessage(e.target.value)}
+            onChange={(e) => draft.set({ message: e.target.value })}
             disabled={mutation.pending}
             className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-colors shadow-2xs resize-none"
           />
@@ -154,6 +156,7 @@ function Comments({ childId }: { childId: string }) {
           </button>
         </div>
       </form>
+      <DraftNotice draft={draft} />
       <ErrorNotice message={mutation.error} />
     </section>
   );
@@ -311,6 +314,7 @@ function Links({ child }: { child: Row }) {
       {creating && (
         <RecordForm
           title="Terbitkan Tautan Privat Raport"
+          draft={{ form: "issue-link-options", scope: child.id }}
           fields={[
             {
               name: "days",
@@ -403,6 +407,7 @@ function ReportMedia({ childId }: { childId: string }) {
       {selecting && (
         <RecordForm
           title="Pilih Laporan Belajar"
+          draft={{ form: "media-report-selection", scope: childId }}
           fields={[
             {
               name: "report_id",
@@ -694,14 +699,15 @@ export function ChildDetail({ id }: { id: string }) {
           {editing && (
             <RecordForm
               title="Edit Data Murid"
+              draft={{ form: "children", loadLatest: () => db.get("children", child.id) }}
               fields={fields.children!}
               initial={child}
               onClose={() => setEditing(false)}
-              onSave={async (values) => {
+              onSave={async (values, _id, meta) => {
                 await db.save(
                   "children",
                   { ...values, id: child.id },
-                  child.version,
+                  meta.version,
                 );
                 query.refresh();
               }}

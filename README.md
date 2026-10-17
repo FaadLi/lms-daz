@@ -63,6 +63,8 @@ Avatar replacement queues the previous object for deletion. Cleanup is retryable
 
 ## Validation
 
+Autosave draft design, supported forms, PWA caching/update policy and test instructions: [Drafts and PWA](docs/DRAFTS_PWA.md).
+
 Multi-subject schedule schema, migration evidence, changed files, validation and rollout notes: [Multi-subject Jadwal](docs/MULTI_SUBJECT_SCHEDULES.md).
 
 ```powershell

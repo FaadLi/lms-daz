@@ -1,6 +1,7 @@
 import { client } from "./supabase";
 import type { Row, Page, Entity, Table } from "../types";
 import { scheduleRow } from "../utils/schedules";
+import { requireOnline } from "./network";
 
 export const PAGE_SIZE = 20;
 export function tableName(entity: Entity): Table {
@@ -33,6 +34,7 @@ export async function call<T>(
   name: `lms_${string}`,
   args: Record<string, unknown> = {},
 ): Promise<T> {
+  requireOnline();
   const { data, error } = await client().rpc(name, args);
   if (error) throw error;
   return data as T;
@@ -96,6 +98,11 @@ export async function get(table: Entity, id: string): Promise<Row> {
 export const db = {
   list,
   get,
+  subjectsByIds: async (ids: string[]) => {
+    const { data, error } = await client().from("lms_subjects").select("id,name,is_active").in("id", ids);
+    if (error) throw error;
+    return (data || []) as { id: string; name: string; is_active: boolean }[];
+  },
   save: (
     table: Entity,
     data: Record<string, unknown>,
@@ -174,6 +181,7 @@ export async function edge<T>(
   body: Record<string, unknown>,
   authenticated = false,
 ): Promise<T> {
+  requireOnline();
   let authorization: string | undefined;
   if (authenticated) {
     const { data } = await client().auth.getSession();

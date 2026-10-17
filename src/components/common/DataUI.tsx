@@ -2,6 +2,9 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { Field, Row } from "../../types";
 import { db, PAGE_SIZE } from "../../services/db";
 import { useMutation, useQuery } from "../../services/hooks";
+import { useDraft } from "../../services/useDraft";
+import type { DraftValues } from "../../services/drafts";
+import { DraftNotice } from "./DraftNotice";
 import {
   scheduleSubjectsLabel,
   type ScheduleSubject,
@@ -222,11 +225,18 @@ function SubjectMultiInput({
       page,
     }),
   );
+  const missing = value.filter((id) => !known.some((item) => item.id === id));
+  const restoredSubjects = useQuery(
+    `draft-subjects:${missing.join(",")}`,
+    () => (missing.length ? db.subjectsByIds(missing) : Promise.resolve([])),
+  );
   return (
     <div className="space-y-1.5 mt-1">
       <div className="flex flex-wrap gap-1.5">
         {value.map((id) => {
-          const subject = known.find((item) => item.id === id);
+          const subject =
+            known.find((item) => item.id === id) ||
+            restoredSubjects.data?.find((item) => item.id === id);
           return (
             <span
               key={id}
@@ -258,7 +268,7 @@ function SubjectMultiInput({
           className="w-full rounded-xl border border-slate-200 pl-9 pr-3 py-2 text-xs text-slate-900 bg-slate-50/50 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
         />
       </div>
-      <ErrorNotice message={query.error} />
+      <ErrorNotice message={query.error || restoredSubjects.error} />
       <select
         aria-label="Tambah mata pelajaran"
         required={field.required && value.length === 0}
@@ -294,34 +304,103 @@ function SubjectMultiInput({
   );
 }
 
-export function RecordForm({
+interface RecordFormProps {
+  title: string;
+  fields: Field[];
+  initial?: Row;
+  onSave: (
+    values: Record<string, unknown>,
+    id: string,
+    meta: { version?: number },
+  ) => Promise<unknown>;
+  onClose: () => void;
+  tools?: (apply: (values: Record<string, unknown>) => void) => ReactNode;
+  draft?: { form: string; scope?: string; loadLatest?: () => Promise<Row> };
+}
+function FreshRecordForm(props: RecordFormProps) {
+  const query = useQuery(
+    `edit-latest:${props.draft!.form}:${props.initial!.id}`,
+    props.draft!.loadLatest!,
+  );
+  if (query.data)
+    return (
+      <RecordForm
+        {...props}
+        initial={query.data}
+        draft={{ ...props.draft!, loadLatest: undefined }}
+      />
+    );
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={props.title}
+      className="fixed inset-0 z-50 bg-slate-900/60 p-4 flex justify-center items-center"
+    >
+      <div className="rounded-2xl bg-white p-5 max-w-xl w-full space-y-3">
+        <QueryState query={query}>
+          <span />
+        </QueryState>
+        <button
+          type="button"
+          onClick={props.onClose}
+          className="text-sm underline"
+        >
+          Tutup
+        </button>
+      </div>
+    </div>
+  );
+}
+export function RecordForm(props: RecordFormProps) {
+  return props.draft?.loadLatest && props.initial?.id ? (
+    <FreshRecordForm {...props} />
+  ) : (
+    <DraftRecordForm {...props} />
+  );
+}
+function DraftRecordForm({
   title,
   fields,
   initial,
   onSave,
   onClose,
   tools,
-}: {
-  title: string;
-  fields: Field[];
-  initial?: Row;
-  onSave: (values: Record<string, unknown>, id: string) => Promise<unknown>;
-  onClose: () => void;
-  tools?: (apply: (values: Record<string, unknown>) => void) => ReactNode;
-}) {
-  const [id] = useState(() => initial?.id || crypto.randomUUID());
-  const [values, setValues] = useState<Record<string, unknown>>(() =>
-    Object.fromEntries(
+  draft: config,
+}: RecordFormProps) {
+  const draft = useDraft({
+    enabled: !!config,
+    form: `${config?.form || "unpersisted"}${config?.scope ? `/${config.scope}` : ""}`,
+    entityId: (initial?.version ?? 0) > 0 ? initial!.id : undefined,
+    baseVersion: initial?.version,
+    baseUpdatedAt: initial?.updated_at as string | undefined,
+    schema: JSON.stringify(
+      fields.map(
+        ({ name, type, multiple, reference, required, min, max, options }) => ({
+          name,
+          type,
+          multiple,
+          reference,
+          required,
+          min,
+          max,
+          options,
+        }),
+      ),
+    ),
+    defaults: Object.fromEntries(
       fields.map((field) => [
         field.name,
         initial?.[field.name] ??
           (field.multiple ? [] : field.type === "checkbox" ? false : ""),
       ]),
-    ),
-  );
+    ) as DraftValues,
+  });
+  const { values } = draft;
+  const id = initial?.id || draft.operationId;
   const mutation = useMutation();
   const set = (name: string, value: unknown) =>
-    setValues((current) => ({ ...current, [name]: value }));
+    draft.set({ [name]: value } as DraftValues);
 
   return (
     <div
@@ -356,6 +435,8 @@ export function RecordForm({
           className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4"
           onSubmit={async (e) => {
             e.preventDefault();
+            if (draft.conflict) return;
+            draft.flush();
             const payload = Object.fromEntries(
               fields.map((field) => {
                 const value = values[field.name];
@@ -387,16 +468,25 @@ export function RecordForm({
                   )
                 )
                   throw new Error("Pilih minimal satu mata pelajaran.");
-                return onSave(payload, id);
+                return onSave(payload, id, { version: initial?.version }).then(
+                  () => {
+                    if (!draft.clear())
+                      throw new Error(
+                        "Data tersimpan di server, tetapi draft belum dapat dihapus dari perangkat. Coba bersihkan draft sebelum menutup.",
+                      );
+                  },
+                );
               })
             )
               onClose();
           }}
         >
-          <fieldset disabled={mutation.pending} className="space-y-4">
-            {tools?.((patch) =>
-              setValues((current) => ({ ...current, ...patch })),
-            )}
+          {config && <DraftNotice draft={draft} />}
+          <fieldset
+            disabled={mutation.pending || draft.conflict}
+            className="space-y-4"
+          >
+            {tools?.((patch) => draft.set(patch as DraftValues))}
             {fields.map((field) => (
               <div key={field.name} className="space-y-1">
                 <label className="block text-xs font-semibold text-slate-700">
@@ -525,7 +615,7 @@ export function RecordForm({
             </button>
             <button
               type="submit"
-              disabled={mutation.pending}
+              disabled={mutation.pending || draft.conflict}
               className="inline-flex items-center justify-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition-colors disabled:opacity-60 cursor-pointer"
             >
               {mutation.pending && (
