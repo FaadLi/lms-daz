@@ -331,6 +331,11 @@ try {
     }});
     await cleanup(); process.exit(0);
   }
+  if (process.argv.includes('--scheduler')) {
+    const { checkPushScheduler } = await import('./push-scheduler-check.mjs');
+    await checkPushScheduler({client:clientA,query,rpc,ownerId:sessionA.user.id,childId});
+    await cleanup();process.exit(0);
+  }
   if (process.argv.includes('--notifications')) {
     await rpc(clientA,'lms_save_lesson_report',{p_data:{id:reportId,child_id:childId,schedule_id:scheduleId,date:'2026-10-21',duration_minutes:60,topic:'Notification test',what_learned:'Material',learning_outcome:'Observed',subject_scores:[{subject_id:subjectId,score:90},{subject_id:secondSubjectId,score:80}]}});
     const { checkNotifications } = await import('./notification-check.mjs');

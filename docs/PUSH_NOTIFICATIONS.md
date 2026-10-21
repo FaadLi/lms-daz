@@ -7,8 +7,8 @@ Implementasi dan validasi: 21 Oktober 2026. React/Vite + Cloudflare Pages, Supab
 - Migration **202610210014_comment_notifications.sql** sudah diterapkan pada project terkonfigurasi `zfpfccznrbotrvfqcdzh`; migration historis tidak diedit.
 - Edge Function **push-dispatch** sudah dideploy dengan `verify_jwt=false` dan autentikasi khusus backend di handler. `lesreport` dan validasi token parent tidak diubah.
 - `lms_notifications` sudah masuk publication `supabase_realtime` dengan RLS penerima.
-- **VAPID, dispatch secret, dua secret Vault, dan jadwal cron belum dikonfigurasi.** Dispatcher menolak pemanggilan tanpa secret; tidak ada pengiriman Web Push produksi yang diklaim berjalan.
-- Cloudflare Pages belum diredeploy. Build lokal siap di `dist`; environment public VAPID perlu diisi sebelum build rilis.
+- Update konfigurasi 21 Oktober 2026: VAPID existing dipertahankan; dispatch secret baru telah disinkronkan di Edge dan Vault. Job `lms-push-dispatch` ID 1 aktif setiap menit. Pemanggilan cron → pg_net → Edge terverifikasi HTTP 200. Lihat [status scheduler](PUSH_SCHEDULER_STATUS.md).
+- Tidak ada deployment frontend dalam konfigurasi scheduler. `VITE_VAPID_PUBLIC_KEY` dikelola melalui Cloudflare Pages oleh pengelola. Penerimaan push pada perangkat nyata tetap memerlukan subscription dan pengujian perangkat.
 
 ## Alur dan schema
 
@@ -57,6 +57,8 @@ Lonceng header menampilkan unread, recent feed, empty/error state, mark read dan
 Suara adalah beep Web Audio singkat saat aplikasi visible/focused, setelah gesture user membuka AudioContext. Preferensi boolean per akun (`lms-notification-sound:v1:<user>`) boleh tersimpan lokal; tidak memuat data privat. Event Realtime/push/feed dengan UUID sama tidak membunyikan beep lagi. Multi-tab membatasi suara pada tab focused. OS notification tetap user-visible (persyaratan Safari); di foreground diminta silent. Background/closed mengikuti OS/Focus/browser dan tidak memaksakan custom sound.
 
 ## Konfigurasi manual sebelum rilis
+
+Langkah infrastruktur 1–5 sudah dikonfigurasi pada project di atas. Daftar berikut adalah referensi untuk project/environment baru; **jangan membuat pasangan VAPID baru saat mengulang setup scheduler**. Untuk memeriksa konfigurasi existing: `node scripts/push-scheduler.mjs`; untuk mengulang setup tanpa rotasi: `node scripts/push-scheduler.mjs --setup`.
 
 1. Buat **satu** pasangan VAPID dengan tooling tepercaya, misalnya `npx web-push@3.6.7 generate-vapid-keys --json`. Simpan private key secara aman; jangan commit atau masukkan ke variabel `VITE_`.
 2. Isi `VITE_VAPID_PUBLIC_KEY` pada `.env.local` dan environment Cloudflare Pages untuk setiap environment rilis yang dipakai. Nilainya harus sama dengan public key Edge.
