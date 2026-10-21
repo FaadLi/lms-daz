@@ -61,6 +61,7 @@ export async function call<T>(
             lms_create_child: "children",
             lms_comment_teacher: "comments",
             lms_read_comments: "comments",
+            lms_mark_notification_read: "notifications",
             lms_mark_report_shared: "lesson_reports",
             lms_revoke_report_link: "report_links",
             lms_record_payment: "invoices",
@@ -70,6 +71,8 @@ export async function call<T>(
     await invalidateData([
       changed,
       "dashboard",
+      ...(changed === "comments" ? ["notifications"] : []),
+      ...(changed === "notifications" ? ["comments"] : []),
       ...(changed === "children"
         ? ["parents", "schedules", "attendance", "invoices"]
         : []),

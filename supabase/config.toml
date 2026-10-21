@@ -4,3 +4,7 @@ project_id = "lms-daz"
 # Public token requests have no JWT. Privileged actions explicitly verify the
 # user's JWT with Auth getUser inside the handler before using an admin client.
 verify_jwt = false
+
+[functions.push-dispatch]
+# Separate backend-only shared secret; no browser JWT can dispatch push.
+verify_jwt = false

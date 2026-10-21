@@ -331,6 +331,12 @@ try {
     }});
     await cleanup(); process.exit(0);
   }
+  if (process.argv.includes('--notifications')) {
+    await rpc(clientA,'lms_save_lesson_report',{p_data:{id:reportId,child_id:childId,schedule_id:scheduleId,date:'2026-10-21',duration_minutes:60,topic:'Notification test',what_learned:'Material',learning_outcome:'Observed',subject_scores:[{subject_id:subjectId,score:90},{subject_id:secondSubjectId,score:80}]}});
+    const { checkNotifications } = await import('./notification-check.mjs');
+    await checkNotifications({clientA,clientB,admin,edge,rpc,query,childId,reportId,sessionA,url,email:users[0].email,emailB:users[1].email,password});
+    await cleanup();process.exit(0);
+  }
   if (process.argv.includes('--audit-report-create')) {
     const { auditReportContract, checkReportCreate } = await import('./report-create-check.mjs');
     const contract = await auditReportContract((sql) => management('/database/query', { query: sql, read_only: true }));

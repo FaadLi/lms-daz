@@ -8,6 +8,9 @@ import { ParentPortal } from "./components/parent/ParentPortal";
 import { ErrorNotice } from "./components/common/DataUI";
 import { DraftProvider } from "./services/useDraft";
 import { DataCacheProvider, clearPrivateData } from './services/queryCache';
+import { resetPushSession } from './services/push';
+import { readPushBinding } from './services/pushBinding';
+import { commentPush, commentRoute } from './utils/pushProtocol';
 
 function route() {
   const hash = window.location.hash.slice(1) || "/dashboard";
@@ -29,9 +32,17 @@ export default function App() {
     const change = () => setCurrent(route());
     window.addEventListener("hashchange", change);
     window.addEventListener("popstate", change);
+    const openComment = (event: MessageEvent) => {
+      const data = event.data?.type==='LMS_OPEN_COMMENT' && commentPush(event.data.payload);
+      if (data) void readPushBinding().then(binding => {
+        if (binding===data.subscriptionId) window.location.hash = commentRoute(data.childId,data.notificationId).split('#')[1];
+      }).catch(() => {});
+    };
+    navigator.serviceWorker?.addEventListener('message',openComment);
     return () => {
       window.removeEventListener("hashchange", change);
       window.removeEventListener("popstate", change);
+      navigator.serviceWorker?.removeEventListener('message',openComment);
     };
   }, []);
   useEffect(() => {
@@ -47,7 +58,7 @@ export default function App() {
     } = supabase.auth.onAuthStateChange((_event, next) => {
       const request = ++generation;
       if (!active) return;
-      if (cacheUser !== next?.user.id) { clearPrivateData(); cacheUser = next?.user.id; }
+      if (cacheUser !== next?.user.id || !next) { clearPrivateData(); resetPushSession(next?.user.id); cacheUser = next?.user.id; }
       setError("");
       if (!next) {
         setSession(null);

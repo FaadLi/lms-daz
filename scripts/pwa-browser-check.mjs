@@ -225,6 +225,9 @@ try {
       .getByRole("button", { name: "Keluar", exact: false })
       .first()
       .click();
+    // Logout now also clears the device push binding/subscription. Wait for the
+    // completed Auth transition before navigating to the next account's login.
+    await page.getByPlaceholder('nama@email.com').waitFor();
     await login(credentials.VALIDATION_B_EMAIL);
     await page.goto(`${origin}/#/subjects`);
     await page

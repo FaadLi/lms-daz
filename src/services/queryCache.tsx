@@ -114,6 +114,7 @@ export function staleTimeFor(key: string): number {
         invoices: 0,
         payment_transactions: 0,
         comments: 0,
+        notifications: 0,
         report_links: 0,
       } as Record<string, number>
     )[queryEntity(key)] ?? 0

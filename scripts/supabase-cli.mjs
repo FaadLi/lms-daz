@@ -40,6 +40,7 @@ const commands = {
   push: ["db", "push", "--yes"],
   plan: ["db", "push", "--dry-run"],
   deploy: ["functions", "deploy", "lesreport", "--project-ref", ref],
+  'deploy-push': ['functions','deploy','push-dispatch','--project-ref',ref],
   origins: [
     "secrets",
     "set",
@@ -50,7 +51,7 @@ const commands = {
 };
 const action = process.argv[2];
 if (!commands[action]) {
-  console.error("Use link, plan, push, origins or deploy");
+  console.error("Use link, plan, push, origins, deploy or deploy-push");
   process.exit(1);
 }
 const args = ["--no-install", "supabase", ...commands[action]];

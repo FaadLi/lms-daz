@@ -16,7 +16,8 @@
     "test": "vitest run",
     "test:database": "vitest run tests/database.test.ts",
     "test:pwa": "node scripts/pwa-browser-check.mjs",
-    "typecheck:edge": "deno check supabase/functions/lesreport/index.ts"
+    "test:push-crypto": "deno test --allow-env=ECE_KEYLOG,DEBUG --config supabase/functions/deno.json supabase/functions/_shared/push-crypto-check.ts",
+    "typecheck:edge": "deno check --config supabase/functions/deno.json supabase/functions/lesreport/index.ts supabase/functions/push-dispatch/index.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.3",

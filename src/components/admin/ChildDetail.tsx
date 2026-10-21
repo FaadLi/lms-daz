@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Row, Entity } from "../../types";
 import { db, edge } from "../../services/db";
 import { useDraft } from "../../services/useDraft";
@@ -452,8 +452,15 @@ function Progress({ childId, name }: { childId: string; name: string }) {
   );
 }
 
-export function ChildDetail({ id }: { id: string }) {
-  const [tab, setTab] = useState("lesson_reports");
+export function ChildDetail({ id, requestedTab }: { id: string; requestedTab?: 'comments' }) {
+  const [tab, setTab] = useState(requestedTab || "lesson_reports");
+  useEffect(() => { if(requestedTab)setTab(requestedTab); },[requestedTab]);
+  const selectTab = (next: string) => {
+    setTab(next);
+    // Clear the notification deep link after manual tab navigation so opening
+    // the same notification again can select Comments without a page reload.
+    if(requestedTab) window.location.hash=`/children/${id}`;
+  };
   const [editing, setEditing] = useState(false);
   const query = useQuery(`child:${id}`, () => db.get("children", id));
   const child = query.data;
@@ -610,7 +617,7 @@ export function ChildDetail({ id }: { id: string }) {
                     key={item.key}
                     type="button"
                     aria-pressed={isActive}
-                    onClick={() => setTab(item.key)}
+                    onClick={() => selectTab(item.key)}
                     className={`inline-flex items-center justify-center gap-1 min-[360px]:gap-1.5 px-1 min-[360px]:px-2 py-2 text-[11px] min-[360px]:text-xs font-bold rounded-xl transition-all whitespace-nowrap cursor-pointer w-full ${
                       isActive
                         ? "bg-indigo-600 text-white shadow-xs"
@@ -634,7 +641,7 @@ export function ChildDetail({ id }: { id: string }) {
                     key={item.key}
                     type="button"
                     aria-pressed={isActive}
-                    onClick={() => setTab(item.key)}
+                    onClick={() => selectTab(item.key)}
                     className={`inline-flex items-center justify-center gap-1 min-[360px]:gap-1.5 px-1 min-[360px]:px-2 py-2 text-[11px] min-[360px]:text-xs font-bold rounded-xl transition-all whitespace-nowrap cursor-pointer w-full ${
                       isActive
                         ? "bg-indigo-600 text-white shadow-xs"
@@ -662,7 +669,7 @@ export function ChildDetail({ id }: { id: string }) {
                   key={item.key}
                   type="button"
                   aria-pressed={isActive}
-                  onClick={() => setTab(item.key)}
+                  onClick={() => selectTab(item.key)}
                   className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl transition-all whitespace-nowrap cursor-pointer ${
                     isActive
                       ? "bg-indigo-600 text-white shadow-xs"

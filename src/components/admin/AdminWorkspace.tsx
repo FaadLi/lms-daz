@@ -2,11 +2,12 @@ import { scheduleSubjectsLabel } from "../../utils/schedules";
 import { useState, useEffect } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { Row, Entity } from "../../types";
-import { client } from "../../services/supabase";
 import { db, edge } from "../../services/db";
 import { useMutation, useQuery } from "../../services/hooks";
 import { CrudPanel } from "./CrudPanel";
 import { ChildDetail } from "./ChildDetail";
+import { NotificationCenter } from './NotificationCenter';
+import { signOutWithPush } from '../../services/push';
 import { Avatar, MediaManager } from "./MediaManager";
 import { ErrorNotice, QueryState, RecordForm, text } from "../common/DataUI";
 import { profileFields } from "../../data/forms";
@@ -320,8 +321,10 @@ export function AdminWorkspace({ user, path }: { user: User; path: string }) {
   const [editing, setEditing] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const mutation = useMutation();
-  const page = path.split("/")[1] || "dashboard";
-  const childId = path.match(/^\/children\/([a-f0-9-]+)$/i)?.[1];
+  const routePath = path.split('?')[0];
+  const page = routePath.split("/")[1] || "dashboard";
+  const childId = routePath.match(/^\/children\/([a-f0-9-]+)$/i)?.[1];
+  const commentTab = new URLSearchParams(path.split('?')[1] || '').get('tab')==='comments';
 
   useEffect(() => {
     setMoreOpen(false);
@@ -369,6 +372,7 @@ export function AdminWorkspace({ user, path }: { user: User; path: string }) {
 
           {/* User profile & actions */}
           <div className="flex items-center gap-3">
+            <NotificationCenter userId={user.id} path={path} />
             <div className="hidden sm:flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200/80">
               <Avatar
                 id={profile.data?.avatar_id ? String(profile.data.avatar_id) : undefined}
@@ -389,8 +393,7 @@ export function AdminWorkspace({ user, path }: { user: User; path: string }) {
               disabled={mutation.pending}
               onClick={() =>
                 void mutation.run(async () => {
-                  const { error } = await client().auth.signOut();
-                  if (error) throw error;
+                  await signOutWithPush();
                 })
               }
               className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 rounded-xl transition-colors cursor-pointer"
@@ -458,14 +461,14 @@ export function AdminWorkspace({ user, path }: { user: User; path: string }) {
               draft={{ form: "profiles" }}
               fields={profileFields}
               initial={{ id: user.id, version: 0 } as Row}
-              onClose={() => void client().auth.signOut()}
+              onClose={() => void signOutWithPush()}
               onSave={async (values) => {
                 await db.save("profiles", { ...values, id: user.id });
                 profile.refresh();
               }}
             />
           ) : childId ? (
-            <ChildDetail key={childId} id={childId} />
+            <ChildDetail key={childId} id={childId} requestedTab={commentTab?'comments':undefined} />
           ) : page === "dashboard" ? (
             <Dashboard
               onNavigate={navigateTo}
@@ -977,8 +980,7 @@ export function AdminWorkspace({ user, path }: { user: User; path: string }) {
                     onClick={() => {
                       setMoreOpen(false);
                       void mutation.run(async () => {
-                        const { error } = await client().auth.signOut();
-                        if (error) throw error;
+                        await signOutWithPush();
                       });
                     }}
                     className="w-full flex items-center justify-between p-2.5 rounded-xl border border-rose-100 bg-rose-50/70 hover:bg-rose-100/70 text-left transition-colors cursor-pointer group"
