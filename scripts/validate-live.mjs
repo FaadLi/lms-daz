@@ -287,6 +287,22 @@ try {
     );
   assert.equal((await getSchedule()).schedule_subjects.length, 2);
   pass("create schedule with two subjects and nested PostgREST join");
+  if (process.argv.includes('--audit-report-create')) {
+    const { auditReportContract, checkReportCreate } = await import('./report-create-check.mjs');
+    const contract = await auditReportContract((sql) => management('/database/query', { query: sql, read_only: true }));
+    await checkReportCreate({ email: users[0].email, password, childId, scheduleId, client: clientA, contract,
+      expectConflict: process.argv.includes('--expect-create-conflict'),
+      parentReport: async (id) => {
+        const link = await edge({ action: 'issue-link', childId, reportId: id, days: 1 }, sessionA);
+        assert.equal(link.status, 200);
+        const parent = await edge({ action: 'parent', token: link.data.token, section: 'reports' });
+        assert.equal(parent.status, 200);
+        return parent.data;
+      },
+    });
+    await cleanup();
+    process.exit(0);
+  }
   const att = {
     id: randomUUID(),
     child_id: childId,

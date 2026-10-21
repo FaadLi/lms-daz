@@ -370,11 +370,14 @@ function DraftRecordForm({
   tools,
   draft: config,
 }: RecordFormProps) {
+  // A scoped create may carry defaults with version=0. Only a persisted row
+  // supplies an optimistic version; new records keep the draft's stable UUID.
+  const version = initial?.id && initial.version > 0 ? initial.version : undefined;
   const draft = useDraft({
     enabled: !!config,
     form: `${config?.form || "unpersisted"}${config?.scope ? `/${config.scope}` : ""}`,
-    entityId: (initial?.version ?? 0) > 0 ? initial!.id : undefined,
-    baseVersion: initial?.version,
+    entityId: version !== undefined ? initial!.id : undefined,
+    baseVersion: version,
     baseUpdatedAt: initial?.updated_at as string | undefined,
     schema: JSON.stringify(
       fields.map(
@@ -472,7 +475,7 @@ function DraftRecordForm({
                   )
                 )
                   throw new Error("Pilih minimal satu mata pelajaran.");
-                return onSave(payload, id, { version: initial?.version }).then(
+                return onSave(payload, id, { version }).then(
                   () => {
                     if (!draft.clear())
                       throw new Error(

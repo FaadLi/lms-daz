@@ -17,6 +17,7 @@ import {
 import { ReportScores } from "../src/components/common/ReportScores";
 import { ReportSubjectInput } from "../src/components/common/ReportSubjectInput";
 import { RecordForm } from "../src/components/common/DataUI";
+import { CrudPanel } from "../src/components/admin/CrudPanel";
 import { DraftProvider } from "../src/services/useDraft";
 import { DraftStore } from "../src/services/drafts";
 import { db } from "../src/services/db";
@@ -25,7 +26,7 @@ import type { Field } from "../src/types";
 vi.mock("../src/services/db", () => ({
   PAGE_SIZE: 20,
   errorMessage: (error: Error) => error.message,
-  db: { list: vi.fn(), get: vi.fn(), subjectsByIds: vi.fn() },
+  db: { list: vi.fn(), get: vi.fn(), subjectsByIds: vi.fn(), save: vi.fn() },
 }));
 const subjects = [
   { id: "math", name: "Matematika", is_active: true },
@@ -43,6 +44,7 @@ const field: Field = {
 };
 beforeEach(() => {
   localStorage.clear();
+  vi.clearAllMocks();
   vi.mocked(db.list).mockResolvedValue({
     items: subjects.map((item) => ({ ...item, version: 1 })),
     total: 2,
@@ -80,6 +82,72 @@ const form = (
 );
 
 describe("report subjects and drafts", () => {
+  it("creates from Child Detail and a restored draft without sending the local version-zero marker", async () => {
+    vi.mocked(db.list).mockImplementation(async (table) =>
+      table === "subjects"
+        ? { items: subjects.map((item) => ({ ...item, version: 1 })), total: 2 }
+        : { items: [], total: 0 },
+    );
+    vi.mocked(db.save).mockResolvedValue({ id: "saved", version: 1 });
+    const panel = () => (
+      <DraftProvider userId="teacher">
+        <CrudPanel table="lesson_reports" title="Laporan" childId="child" />
+      </DraftProvider>
+    );
+    const first = render(panel());
+    fireEvent.click(screen.getByRole("button", { name: "Tambah Laporan" }));
+    fireEvent.click(await screen.findByLabelText("Matematika"));
+    fireEvent.click(screen.getByLabelText("IPA"));
+    fireEvent.change(await screen.findByLabelText("Nilai Matematika"), {
+      target: { value: "91" },
+    });
+    fireEvent.change(screen.getByLabelText("Nilai IPA"), {
+      target: { value: "80" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Masukkan topik…"), {
+      target: { value: "Fresh" },
+    });
+    // Submit through the real CrudPanel -> RecordForm -> data-access boundary.
+    const submit = () =>
+      fireEvent.submit(
+        screen.getByRole("button", { name: "Simpan" }).closest("form")!,
+      );
+    submit();
+    await waitFor(() => expect(db.save).toHaveBeenCalled());
+    expect(vi.mocked(db.save).mock.calls[0][2]).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // A second create is closed with unsaved input and restored on reopening.
+    fireEvent.click(screen.getByRole("button", { name: "Tambah Laporan" }));
+    fireEvent.click(await screen.findByLabelText("Matematika"));
+    fireEvent.change(await screen.findByLabelText("Nilai Matematika"), {
+      target: { value: "75" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Masukkan topik…"), {
+      target: { value: "Restored" },
+    });
+    first.unmount();
+    const key = Object.keys(localStorage).find((item) =>
+      decodeURIComponent(item).includes("lesson_reports"),
+    )!;
+    const oldDraft = JSON.parse(localStorage.getItem(key)!);
+    // Failed creates from the previous frontend persist baseVersion=0.
+    oldDraft.baseVersion = 0;
+    localStorage.setItem(key, JSON.stringify(oldDraft));
+    render(panel());
+    fireEvent.click(screen.getByRole("button", { name: "Tambah Laporan" }));
+    expect(
+      ((await screen.findByLabelText("Nilai Matematika")) as HTMLInputElement)
+        .value,
+    ).toBe("75");
+    submit();
+    await waitFor(() => expect(db.save).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(db.save).mock.calls[1][2]).toBeNull();
+    expect(vi.mocked(db.save).mock.calls[1][1]).toMatchObject({
+      child_id: "child",
+      topic: "Restored",
+      subject_scores: [{ subject_id: "math", score: 75 }],
+    });
+  });
   it("computes equal averages with one decimal and rejects incomplete/invalid scores", () => {
     expect(reportAverage(scores)).toBe(85.5);
     expect(reportAverage([{ subject_id: "math", score: 90 }])).toBe(90);
