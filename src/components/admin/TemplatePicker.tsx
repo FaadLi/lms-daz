@@ -50,7 +50,6 @@ export function TemplatePicker({
                 apply(
                   Object.fromEntries(
                     [
-                      "subject_id",
                       "topic",
                       "what_learned",
                       "next_step",

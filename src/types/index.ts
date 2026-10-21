@@ -38,7 +38,8 @@ export interface Field {
     | "number"
     | "checkbox"
     | "select"
-    | "reference";
+    | "reference"
+    | "subject_scores";
   multiple?: boolean;
   required?: boolean;
   min?: number;

@@ -1,4 +1,6 @@
-export type DraftValue = string | number | boolean | null | string[];
+import type { SubjectScore } from "../utils/reports";
+export type DraftValue =
+  string | number | boolean | null | string[] | SubjectScore[];
 export type DraftValues = Record<string, DraftValue>;
 export interface DraftOptions {
   userId?: string;
@@ -42,6 +44,18 @@ export function draftKey(
 }
 const sensitive =
   /password|passwd|token|secret|session|api[_-]?key|authorization|credential|base64|^file$|^photo$|^image$/i;
+function safeSubjectScore(value: unknown): value is SubjectScore {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    Object.keys(entry).every(
+      (key) => key === "subject_id" || key === "score",
+    ) &&
+    typeof entry.subject_id === "string" &&
+    (typeof entry.score === "string" ||
+      (typeof entry.score === "number" && Number.isFinite(entry.score)))
+  );
+}
 function safeValues(values: unknown, defaults: DraftValues): DraftValues {
   if (!values || typeof values !== "object" || Array.isArray(values)) return {};
   return Object.fromEntries(
@@ -49,12 +63,14 @@ function safeValues(values: unknown, defaults: DraftValues): DraftValues {
       ([key, value]) =>
         Object.hasOwn(defaults, key) &&
         !sensitive.test(key) &&
-        (value === null ||
-          typeof value === "string" ||
-          typeof value === "boolean" ||
-          (typeof value === "number" && Number.isFinite(value)) ||
-          (Array.isArray(value) &&
-            value.every((entry) => typeof entry === "string"))),
+        (key === "subject_scores"
+          ? Array.isArray(value) && value.every(safeSubjectScore)
+          : value === null ||
+            typeof value === "string" ||
+            typeof value === "boolean" ||
+            (typeof value === "number" && Number.isFinite(value)) ||
+            (Array.isArray(value) &&
+              value.every((entry) => typeof entry === "string"))),
     ),
   );
 }
@@ -82,6 +98,48 @@ export class DraftStore {
       const raw = localStorage.getItem(this.key);
       if (!raw) return;
       const entry = JSON.parse(raw) as DraftEnvelope;
+      // Preserve pre-migration single-subject report drafts. Only accept the
+      // precise field replacement; all unrelated schema changes stay rejected.
+      if (
+        entry.version === 1 &&
+        entry.schema !== options.schema &&
+        Object.hasOwn(options.defaults, "subject_scores") &&
+        /^lesson_reports(?:\/|$)/.test(options.form)
+      ) {
+        try {
+          const oldFields = JSON.parse(entry.schema) as { name: string }[];
+          const newFields = JSON.parse(options.schema) as { name: string }[];
+          if (
+            oldFields.some((field) => field.name === "subject_id") &&
+            oldFields.some((field) => field.name === "score") &&
+            JSON.stringify(
+              oldFields.filter(
+                (field) => !["subject_id", "score"].includes(field.name),
+              ),
+            ) ===
+              JSON.stringify(
+                newFields.filter((field) => field.name !== "subject_scores"),
+              ) &&
+            typeof entry.values.subject_id === "string" &&
+            entry.values.subject_id &&
+            (typeof entry.values.score === "string" ||
+              typeof entry.values.score === "number")
+          ) {
+            entry.values = {
+              ...entry.values,
+              subject_scores: [
+                {
+                  subject_id: entry.values.subject_id,
+                  score: entry.values.score,
+                },
+              ],
+            };
+            entry.schema = options.schema;
+          }
+        } catch {
+          /* Unsupported legacy shape remains a visible schema mismatch. */
+        }
+      }
       if (entry.version !== 1 || entry.schema !== options.schema) {
         this.state.error =
           "Format draft lama berbeda. Input terbaru digunakan; draft lama tidak dipulihkan.";

@@ -1,4 +1,6 @@
 import { scheduleSubjectsLabel } from "../../utils/schedules";
+import { reportSubjectsLabel } from '../../utils/reports';
+import { ReportScores } from '../common/ReportScores';
 import { useState } from "react";
 import type { Row, Entity, PaymentStatus } from "../../types";
 import { db } from "../../services/db";
@@ -62,7 +64,7 @@ export function RowDetails({ row, table }: { row: Row; table: Entity }) {
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
           <div className="space-y-0.5">
             <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-md">
-              {text(row, "subject.name") || "Pelajaran"}
+              {reportSubjectsLabel(row) || "Pelajaran"}
             </span>
             <h4 className="text-base font-bold text-slate-900 mt-1">
               {text(row, "topic")}
@@ -79,6 +81,7 @@ export function RowDetails({ row, table }: { row: Row; table: Entity }) {
           </div>
         </div>
 
+        <ReportScores row={row} />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
           <div className="bg-slate-50 border border-slate-100 rounded-xl p-2.5">
             <span className="font-bold text-slate-700 block mb-1">
@@ -594,7 +597,7 @@ export function CrudPanel({
           key={`${editing?.id || "new"}:${newParent}`}
           title={`${editing ? "Edit" : "Tambah"} ${title}`}
           draft={{ form: table === "children" && !editing && newParent ? "children-with-parent" : table, scope: editing ? undefined : childId, loadLatest: editing ? () => db.get(table, editing.id) : undefined }}
-          initial={editing || undefined}
+          initial={editing || (table === "lesson_reports" && childId ? { id: "", version: 0, child_id: childId } : undefined)}
           tools={
             editing === null && table === "children"
               ? () => (

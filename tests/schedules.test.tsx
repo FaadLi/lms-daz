@@ -35,7 +35,7 @@ describe("schedule presentation and edit hydration", () => {
       fields.schedules?.find((field) => field.name === "subject_ids"),
     ).toMatchObject({ multiple: true, required: true });
     expect(
-      fields.lesson_reports?.find((field) => field.name === "subject_id"),
-    ).toMatchObject({ type: "reference", required: true });
+      fields.lesson_reports?.find((field) => field.name === "subject_scores"),
+    ).toMatchObject({ type: "subject_scores", required: true });
   });
 });

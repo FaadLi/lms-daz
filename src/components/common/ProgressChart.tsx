@@ -58,7 +58,7 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ reports, childName
   if (scores.length >= 2) {
     const first = scores[0];
     const last = scores[scores.length - 1];
-    const diff = last - first;
+    const diff = Math.round((last - first) * 10) / 10;
     if (diff > 0) {
       insightText = `Nilai ${childName} menunjukkan tren perkembangan positif (+${diff} poin) dalam ${scores.length} sesi terakhir.`;
     } else if (diff === 0) {
@@ -79,7 +79,7 @@ export const ProgressChart: React.FC<ProgressChartProps> = ({ reports, childName
         </div>
         <div className="text-right">
           <span className="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-md px-2 py-0.5 tabular-nums">
-            Rata-rata: {Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)}
+            Rata-rata: {Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 10) / 10}
           </span>
         </div>
       </div>

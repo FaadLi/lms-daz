@@ -1,6 +1,7 @@
 import { client } from "./supabase";
 import type { Row, Page, Entity, Table } from "../types";
 import { scheduleRow } from "../utils/schedules";
+import { reportRow } from "../utils/reports";
 import { requireOnline } from "./network";
 
 export const PAGE_SIZE = 20;
@@ -14,7 +15,7 @@ const joins: Partial<Record<Entity, string>> = {
   attendance:
     "*,child:lms_children!lms_attendance_owner_id_child_id_fkey(full_name,nickname)",
   lesson_reports:
-    "*,subject:lms_subjects!lms_lesson_reports_owner_id_subject_id_fkey(name)",
+    "*,report_subjects:lms_lesson_report_subjects!lms_report_subjects_report_fkey(subject_id,score,subject:lms_subjects!lms_report_subjects_subject_fkey(id,name,is_active))",
   report_templates:
     "*,subject:lms_subjects!lms_report_templates_owner_id_subject_id_fkey(name)",
   invoices:
@@ -81,7 +82,12 @@ export async function list(
   if (error) throw error;
   const items = (data || []) as unknown as Row[];
   return {
-    items: table === "schedules" ? items.map(scheduleRow) : items,
+    items:
+      table === "schedules"
+        ? items.map(scheduleRow)
+        : table === "lesson_reports"
+          ? items.map(reportRow)
+          : items,
     total: count || 0,
   };
 }
@@ -93,13 +99,20 @@ export async function get(table: Entity, id: string): Promise<Row> {
     .single();
   if (error) throw error;
   const row = data as unknown as Row;
-  return table === "schedules" ? scheduleRow(row) : row;
+  return table === "schedules"
+    ? scheduleRow(row)
+    : table === "lesson_reports"
+      ? reportRow(row)
+      : row;
 }
 export const db = {
   list,
   get,
   subjectsByIds: async (ids: string[]) => {
-    const { data, error } = await client().from("lms_subjects").select("id,name,is_active").in("id", ids);
+    const { data, error } = await client()
+      .from("lms_subjects")
+      .select("id,name,is_active")
+      .in("id", ids);
     if (error) throw error;
     return (data || []) as { id: string; name: string; is_active: boolean }[];
   },
@@ -113,11 +126,16 @@ export const db = {
           p_data: data,
           p_version: version,
         })
-      : call<Row>("lms_save_record", {
-          p_table: tableName(table),
-          p_data: data,
-          p_version: version,
-        }),
+      : table === "lesson_reports"
+        ? call<Row>("lms_save_lesson_report", {
+            p_data: data,
+            p_version: version,
+          })
+        : call<Row>("lms_save_record", {
+            p_table: tableName(table),
+            p_data: data,
+            p_version: version,
+          }),
   createChild: (
     child: Record<string, unknown>,
     parent: Record<string, unknown> | null,

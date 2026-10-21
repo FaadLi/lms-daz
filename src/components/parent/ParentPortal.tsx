@@ -1,6 +1,8 @@
 import { scheduleSubjectsLabel } from "../../utils/schedules";
 import { useEffect, useState } from "react";
 import { DraftProvider, useDraft } from "../../services/useDraft";
+import { reportSubjectsLabel } from '../../utils/reports';
+import { ReportScores } from '../common/ReportScores';
 import { DraftNotice } from "../common/DraftNotice";
 import type { Row } from "../../types";
 import { edge } from "../../services/db";
@@ -243,7 +245,7 @@ function ParentPortalContent({ token }: { token: string }) {
                           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                             <div className="space-y-1">
                               <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md">
-                                {text(row, "subject.name") || "Pelajaran"}
+                                {reportSubjectsLabel(row) || "Pelajaran"}
                               </span>
                               <h3 className="text-base font-extrabold text-slate-900 mt-1">
                                 {text(row, "topic")}
@@ -255,9 +257,10 @@ function ParentPortalContent({ token }: { token: string }) {
                                   : ""}
                               </p>
                             </div>
-                            <ScoreBadge score={Number(row.score)} size="lg" />
+                            <div className="text-center space-y-1"><p className="text-2xs text-slate-500">Nilai Keseluruhan</p><ScoreBadge score={Number(row.score)} size="lg" /></div>
                           </div>
 
+                          <ReportScores row={row} />
                           {/* 4-Question Breakdown */}
                           <div className="space-y-2.5 text-xs">
                             <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3">

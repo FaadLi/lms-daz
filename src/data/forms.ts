@@ -82,7 +82,12 @@ export const fields: Partial<Record<Entity, Field[]>> = {
   lesson_reports: [
     ref("child_id", "Murid", "children"),
     ref("schedule_id", "Jadwal", "schedules", true),
-    ref("subject_id", "Mata pelajaran", "subjects"),
+    {
+      name: "subject_scores",
+      label: "Mata pelajaran dan nilai",
+      type: "subject_scores",
+      required: true,
+    },
     required("date", "Tanggal", "date"),
     {
       ...required("duration_minutes", "Durasi (menit)", "number"),
@@ -92,7 +97,6 @@ export const fields: Partial<Record<Entity, Field[]>> = {
     required("topic", "Topik"),
     required("what_learned", "Materi yang dipelajari", "textarea"),
     required("learning_outcome", "Hasil yang diamati", "textarea"),
-    { ...required("score", "Nilai", "number"), min: 0, max: 100 },
     { name: "teacher_notes", label: "Catatan guru", type: "textarea" },
     { name: "next_step", label: "Langkah berikutnya", type: "textarea" },
     { name: "home_practice", label: "Latihan rumah", type: "textarea" },

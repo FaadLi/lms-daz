@@ -5,6 +5,8 @@ import { useMutation, useQuery } from "../../services/hooks";
 import { useDraft } from "../../services/useDraft";
 import type { DraftValues } from "../../services/drafts";
 import { DraftNotice } from "./DraftNotice";
+import { ReportSubjectInput } from './ReportSubjectInput';
+import { reportAverage, type SubjectScore, type ReportSubject } from '../../utils/reports';
 import {
   scheduleSubjectsLabel,
   type ScheduleSubject,
@@ -392,7 +394,7 @@ function DraftRecordForm({
       fields.map((field) => [
         field.name,
         initial?.[field.name] ??
-          (field.multiple ? [] : field.type === "checkbox" ? false : ""),
+          (field.multiple || field.type === 'subject_scores' ? [] : field.type === "checkbox" ? false : ""),
       ]),
     ) as DraftValues,
   });
@@ -442,7 +444,7 @@ function DraftRecordForm({
                 const value = values[field.name];
                 return [
                   field.name,
-                  field.type === "number"
+                  field.type === 'subject_scores' ? (value as SubjectScore[]).map((entry) => ({ subject_id: entry.subject_id, score: entry.score === '' ? null : Number(entry.score) })) : field.type === "number"
                     ? value === ""
                       ? null
                       : Number(value)
@@ -458,6 +460,8 @@ function DraftRecordForm({
             );
             if (
               await mutation.run(() => {
+                if (fields.some((field) => field.type === 'subject_scores' && reportAverage(values[field.name] as SubjectScore[]) === null))
+                  throw new Error('Pilih minimal satu mata pelajaran dan isi seluruh nilai 0 sampai 100.');
                 if (
                   fields.some(
                     (field) =>
@@ -495,7 +499,12 @@ function DraftRecordForm({
                     <span className="text-rose-500 ml-0.5">*</span>
                   )}
                 </label>
-                {field.multiple ? (
+                {field.type === 'subject_scores' ? (
+                  <ReportSubjectInput value={values[field.name] as SubjectScore[]} scheduleId={String(values.schedule_id || '')}
+                    childId={String(values.child_id || initial?.child_id || field.childId || '')}
+                    savedSubjects={((initial?.report_subjects || []) as ReportSubject[]).map((item) => item.subject)}
+                    onChange={(value) => set(field.name, value)} />
+                ) : field.multiple ? (
                   <SubjectMultiInput
                     field={field}
                     value={values[field.name] as string[]}

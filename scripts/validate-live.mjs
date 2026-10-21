@@ -161,11 +161,11 @@ try {
     "production/development CORS, foreign origin rejection and anonymous Edge denial",
   );
   const schema = await query(
-    "select tablename,rowsecurity from pg_tables where schemaname='public' and tablename in ('lms_profiles','lms_parents','lms_children','lms_subjects','lms_report_templates','lms_schedules','lms_schedule_subjects','lms_attendance','lms_lesson_reports','lms_comments','lms_invoices','lms_payment_transactions','lms_media_assets') order by tablename",
+    "select tablename,rowsecurity from pg_tables where schemaname='public' and tablename in ('lms_profiles','lms_parents','lms_children','lms_subjects','lms_report_templates','lms_schedules','lms_schedule_subjects','lms_attendance','lms_lesson_reports','lms_lesson_report_subjects','lms_comments','lms_invoices','lms_payment_transactions','lms_media_assets') order by tablename",
   );
-  assert.equal(schema.length, 13);
+  assert.equal(schema.length, 14);
   assert.ok(schema.every((row) => row.rowsecurity));
-  pass("13 exposed tables have RLS");
+  pass("14 exposed tables have RLS");
   const indexes = await query(
     "select count(*)::integer count from pg_indexes where schemaname='public' and tablename in ('lms_children','lms_schedules','lms_attendance','lms_lesson_reports','lms_invoices','lms_comments','lms_media_assets')",
   );
@@ -461,7 +461,9 @@ try {
   assert.ok(shared.shared_at);
   await rpc(clientA, "lms_save_record", {
     p_table: "lms_lesson_reports",
-    p_data: { id: reportId, teacher_notes: "Updated after sharing" },
+    p_data: { id: reportId, teacher_notes: "Updated after sharing", subject_scores: [
+      { subject_id: secondSubjectId, score: 91 }, { subject_id: thirdSubjectId, score: 80 },
+    ] },
     p_version: shared.version,
   });
   assert.equal(
@@ -477,6 +479,39 @@ try {
     shared.shared_at,
   );
   pass("sharing state preserved through edits");
+  const reportSelect = '*,report_subjects:lms_lesson_report_subjects!lms_report_subjects_report_fkey(subject_id,score,subject:lms_subjects!lms_report_subjects_subject_fkey(id,name,is_active))';
+  const getReport = () => result(clientA.from('lms_lesson_reports').select(reportSelect).eq('id', reportId).single());
+  const scored = await getReport();
+  assert.equal(Number(scored.score), 85.5);
+  assert.equal(scored.report_subjects.length, 2);
+  const scoreRaces = await Promise.all([90, 100].map((score) => clientA.rpc('lms_save_lesson_report', {
+    p_data: { id: reportId, subject_scores: [{ subject_id: secondSubjectId, score }, { subject_id: thirdSubjectId, score: 80 }] },
+    p_version: scored.version,
+  })));
+  assert.equal(scoreRaces.filter((item) => !item.error).length, 1);
+  assert.equal(scoreRaces.filter((item) => item.error?.code === 'PT409' && item.status === 409).length, 1);
+  const winner = await getReport();
+  assert.equal(winner.version, scored.version + 1);
+  assert.equal(Number(winner.score), (Number(winner.report_subjects.find((s) => s.subject_id === secondSubjectId).score) + 80) / 2);
+  for (const subject_scores of [[], [{ subject_id: subjectId, score: 80 }], [{ subject_id: foreignSubjectId, score: 80 }], [{ subject_id: secondSubjectId, score: 101 }]]) {
+    assert.ok((await clientA.rpc('lms_save_lesson_report', { p_data: { id: reportId, subject_scores }, p_version: winner.version })).error);
+    assert.equal((await getReport()).version, winner.version);
+  }
+  assert.equal((await result(clientB.from('lms_lesson_report_subjects').select('report_id').eq('report_id', reportId))).length, 0);
+  assert.ok((await clientA.from('lms_lesson_report_subjects').delete().eq('report_id', reportId)).error);
+  assert.ok((await fresh().from('lms_lesson_report_subjects').select('*')).error);
+  // Three unscheduled subjects, then a subset edit, do not multiply sessions.
+  const extraReport = await rpc(clientA, 'lms_save_lesson_report', { p_data: {
+    id: randomUUID(), child_id: childId, date: '2026-10-21', duration_minutes: 60, topic: 'Multi-score validation',
+    what_learned: 'Materials', learning_outcome: 'Observed', subject_scores: [
+      { subject_id: subjectId, score: 0 }, { subject_id: secondSubjectId, score: 100 }, { subject_id: thirdSubjectId, score: 100 },
+    ],
+  } });
+  assert.equal(Number(extraReport.score), 66.7);
+  const subset = await rpc(clientA, 'lms_save_lesson_report', { p_data: { id: extraReport.id, subject_scores: [{ subject_id: subjectId, score: 79 }] }, p_version: 1 });
+  assert.equal(Number(subset.score), 79);
+  assert.equal(subset.subject_scores.length, 1);
+  pass('report relational select, per-subject averages, subset edits, RLS, validation rollback and concurrent HTTP 409');
   const joined = await result(
     clientA
       .from("lms_children")
@@ -755,6 +790,8 @@ try {
   assert.equal(opened.status, 200);
   assert.equal(opened.data.items.length, 1);
   assert.equal(opened.data.items[0].id, reportId);
+  assert.equal(opened.data.items[0].report_subjects.length, 2);
+  assert.equal(Number(opened.data.items[0].score), Number((await getReport()).score));
   assert.equal(opened.data.child.id, childId);
   assert.ok(opened.data.media[0].url);
   assert.equal((await fetch(opened.data.media[0].url)).status, 200);
@@ -844,6 +881,13 @@ try {
   pass("parent comment identity and retry protection");
   const info = await rpc(clientA, "lms_report_link_info", { p_child: childId });
   assert.equal(Number(info.access_count), 1);
+  if (process.argv.includes('--browser')) {
+    const { validateReportUi } = await import('./report-browser-check.mjs');
+    await validateReportUi({ email: users[0].email, password, childId, token: issued.data.token });
+    assert.equal(Number((await getReport()).score), 85.5);
+    const visited = await rpc(clientA, 'lms_report_link_info', { p_child: childId });
+    assert.equal(Number(visited.access_count), 2);
+  }
   const hashes = await query(
     `select token_hash from private.lms_report_links where owner_id='${ownerIds[0]}'::uuid`,
   );

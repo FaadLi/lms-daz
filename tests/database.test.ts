@@ -8,6 +8,8 @@ const parent = "33333333-3333-4333-8333-333333333333";
 const child = "44444444-4444-4444-8444-444444444444";
 const subject = "55555555-5555-4555-8555-555555555555";
 const invoice = "66666666-6666-4666-8666-666666666666";
+const legacyReport = '30000000-0000-4000-8000-000000000001';
+let legacyReportSnapshot: unknown;
 let db: PGlite;
 async function asUser(id: string) {
   await db.exec(
@@ -120,6 +122,12 @@ beforeAll(async () => {
       "utf8",
     ),
   );
+  await asUser(a);
+  await rpc('lms_save_record', `'lms_lesson_reports',${j({ id: legacyReport, child_id: child, subject_id: subject, score: 83, date: '2026-10-15', duration_minutes: 60, topic: 'Legacy', what_learned: 'Preserved', learning_outcome: 'Preserved' })}`);
+  legacyReportSnapshot = (await db.query(`select to_jsonb(r) value from public.lms_lesson_reports r where id='${legacyReport}'`)).rows[0];
+  await db.exec('reset role');
+  await db.exec(readFileSync('supabase/migrations/202610210012_report_subjects.sql', 'utf8'));
+  await db.exec(readFileSync('supabase/migrations/202610210013_parent_report_compatibility.sql', 'utf8'));
   await asUser(a);
 }, 30000);
 afterAll(async () => {
@@ -385,7 +393,7 @@ describe("multi-subject schedules", () => {
       id: crypto.randomUUID(),
       child_id: child,
       schedule_id: schedule,
-      subject_id: subject,
+      subject_id: third,
       date: att.date,
       duration_minutes: 60,
       topic: "Topic",
@@ -407,7 +415,7 @@ describe("multi-subject schedules", () => {
           `select subject_id from public.lms_lesson_reports where schedule_id='${schedule}'`,
         )
       ).rows,
-    ).toEqual([{ subject_id: subject }]);
+    ).toEqual([{ subject_id: third }]);
   });
 
   it("returns all subjects via the scoped parent query without multiplying schedules", async () => {
@@ -634,5 +642,109 @@ describe("PostgreSQL ownership and validation", () => {
     await expect(
       rpc("lms_parent_request", `'${"b".repeat(64)}','read'`),
     ).rejects.toThrow();
+  });
+});
+
+describe('multi-subject lesson reports', () => {
+  const math = '40000000-0000-4000-8000-000000000001';
+  const science = '40000000-0000-4000-8000-000000000002';
+  const english = '40000000-0000-4000-8000-000000000003';
+  const foreign = '40000000-0000-4000-8000-000000000004';
+  const inactive = '40000000-0000-4000-8000-000000000005';
+  const schedule = '40000000-0000-4000-8000-000000000006';
+  const report = '40000000-0000-4000-8000-000000000007';
+  const scores = (numbers = [90, 80, 70]) => [math, science, english].slice(0, numbers.length).map((subject_id, index) => ({ subject_id, score: numbers[index] }));
+  const values = (id = report) => ({ id, child_id: child, schedule_id: schedule, date: '2026-10-21', duration_minutes: 60, topic: 'Integrated', what_learned: 'Materials', learning_outcome: 'Observed', subject_scores: scores() });
+  const save = async (data: object, version?: number) => (await rpc('lms_save_lesson_report', `${j(data)},${version ?? 'null'}`)).rows[0].value as RowResult;
+  type RowResult = { id: string; version: number; score: number; subject_scores: { subject_id: string; score: number }[] };
+  const read = async () => (await db.query<{ version: number; score: string }>(`select version,score from public.lms_lesson_reports where id='${report}'`)).rows[0];
+  beforeAll(async () => {
+    await asUser(a);
+    for (const [id, name, is_active] of [[math, 'Report Math', true], [science, 'Report Science', true], [english, 'Report English', true], [inactive, 'Inactive report subject', false]])
+      await rpc('lms_save_record', `'lms_subjects',${j({ id, name, is_active })}`);
+    await rpc('lms_save_schedule', `${j({ id: schedule, child_id: child, subject_ids: [math, science, english], day_of_week: 3, start_time: '13:00', end_time: '14:00', location: 'Class', is_active: false })}`);
+    await asUser(b);
+    await rpc('lms_save_record', `'lms_subjects',${j({ id: foreign, name: 'Other teacher' })}`);
+    await asUser(a);
+  });
+  it('backfills the legacy score without changing the report row', async () => {
+    expect((await db.query(`select to_jsonb(r) value from public.lms_lesson_reports r where id='${legacyReport}'`)).rows[0]).toEqual(legacyReportSnapshot);
+    expect((await db.query(`select subject_id,score from public.lms_lesson_report_subjects where report_id='${legacyReport}'`)).rows).toEqual([{ subject_id: subject, score: '83' }]);
+  });
+  it('creates one report with three scores and retries idempotently', async () => {
+    const result = await save(values());
+    expect(Number(result.score)).toBe(80);
+    expect(result.subject_scores).toEqual(scores());
+    expect((await save(values())).version).toBe(1);
+    await expect(save({ ...values(), topic: 'Different retry' })).rejects.toMatchObject({ code: 'PT409' });
+    await expect(save(values(crypto.randomUUID()))).rejects.toMatchObject({ code: '23505' });
+  });
+  it('supports a scheduled subset, decimals, addition/removal and stale protection', async () => {
+    expect(Number((await save({ id: report, subject_scores: scores([91, 80]) }, 1)).score)).toBe(85.5);
+    expect(Number((await save({ id: report, subject_scores: scores([0, 100, 100]) }, 2)).score)).toBe(66.7);
+    await expect(save({ id: report, subject_scores: scores([1]) }, 2)).rejects.toMatchObject({ code: 'PT409' });
+    expect(await read()).toEqual({ version: 3, score: '66.7' });
+    expect((await save({ id: report, subject_scores: scores([87.25]) }, 3)).subject_scores).toHaveLength(1);
+    expect(Number((await read()).score)).toBe(87.3);
+    await rpc('lms_save_record', `'lms_lesson_reports',${j({ id: report, topic: 'Patched' })},4`);
+  });
+  it('rejects invalid arrays/scores and forged fields atomically', async () => {
+    for (const subject_scores of [[], null, [{ subject_id: math }], [{ subject_id: math, score: '' }], [{ subject_id: math, score: null }], [{ subject_id: math, score: -1 }], [{ subject_id: math, score: 101 }], [null], [{ subject_id: math, score: 80, owner_id: b }], [scores()[0], scores()[0]]]) {
+      await expect(save({ ...values(crypto.randomUUID()), subject_scores })).rejects.toThrow();
+    }
+    await expect(save({ id: report, owner_id: b }, 5)).rejects.toThrow();
+    expect(await read()).toEqual({ version: 5, score: '87.3' });
+  });
+  it('rejects subjects outside the schedule or another account; permits active unscheduled subjects', async () => {
+    for (const subject_id of [subject, foreign])
+      await expect(save({ ...values(crypto.randomUUID()), subject_scores: [{ subject_id, score: 80 }] })).rejects.toThrow();
+    await expect(save({ ...values(crypto.randomUUID()), schedule_id: null, subject_scores: [{ subject_id: inactive, score: 80 }] })).rejects.toMatchObject({ code: '42501' });
+    const single = await save({ ...values(crypto.randomUUID()), schedule_id: null, subject_scores: scores([79]) });
+    expect(Number(single.score)).toBe(79);
+  });
+  it('does not silently remove historical scores when schedule membership changes', async () => {
+    await rpc('lms_save_schedule', `${j({ id: schedule, subject_ids: [science] })},1`);
+    await expect(save({ id: report, teacher_notes: 'Keep history' }, 5)).rejects.toMatchObject({ code: '23514' });
+    expect(await read()).toEqual({ version: 5, score: '87.3' });
+    await save({ id: report, schedule_id: null }, 5);
+  });
+  it('rolls back main report and relations if a relation write fails', async () => {
+    await db.exec(`reset role; create function private.fail_report_test() returns trigger language plpgsql as $$ begin raise exception 'Simulated score failure'; end $$;
+      create trigger fail_report_test before insert on public.lms_lesson_report_subjects for each row execute function private.fail_report_test();`);
+    try {
+      await asUser(a);
+      await expect(save({ id: report, topic: 'Rollback', subject_scores: scores([90, 80]) }, 6)).rejects.toThrow(/Simulated score failure/);
+      expect(await read()).toEqual({ version: 6, score: '87.3' });
+    } finally {
+      await db.exec('reset role; drop trigger fail_report_test on public.lms_lesson_report_subjects; drop function private.fail_report_test();');
+      await asUser(a);
+    }
+  });
+  it('enforces RLS, ownership FKs, RPC-only writes and the derived-score invariant', async () => {
+    await asUser(b);
+    expect((await db.query(`select * from public.lms_lesson_report_subjects where report_id='${report}'`)).rows).toEqual([]);
+    await expect(save({ id: report, topic: 'Foreign' }, 6)).rejects.toMatchObject({ code: '42501' });
+    await asUser(a);
+    await expect(db.exec(`update public.lms_lesson_reports set score=1 where id='${report}'`)).rejects.toThrow();
+    await expect(db.exec(`delete from public.lms_lesson_report_subjects where report_id='${report}'`)).rejects.toThrow();
+    await db.exec('reset role');
+    await expect(db.exec(`update public.lms_lesson_reports set score=1 where id='${report}'`)).rejects.toMatchObject({ code: '23514' });
+    await expect(db.exec(`insert into public.lms_lesson_report_subjects(report_id,subject_id,owner_id,score) values('${report}','${foreign}','${a}',80)`)).rejects.toMatchObject({ code: '23503' });
+    await db.exec('set role anon');
+    await expect(db.query('select * from public.lms_lesson_report_subjects')).rejects.toThrow();
+    await asUser(a);
+  });
+  it('returns scores only for the authorized report through the parent boundary', async () => {
+    await save({ id: report, subject_scores: scores() }, 6);
+    await expect(rpc('lms_save_record', `'lms_lesson_reports',${j({ id: report, score: 10 })},7`)).rejects.toMatchObject({ code: 'PT409' });
+    await db.exec('reset role');
+    const hash = 'd'.repeat(64);
+    await rpc('lms_issue_report_link', `'${a}','${child}','${report}','${hash}',now()+interval '1 hour'`);
+    const parent = (await rpc('lms_parent_request', `'${hash}','read','reports'`)).rows[0].value as { items: { id: string; score: number; report_subjects: unknown[] }[] };
+    expect(parent.items).toHaveLength(1);
+    expect(parent.items[0]).toMatchObject({ id: report, score: 80 });
+    expect(parent.items[0].report_subjects).toHaveLength(3);
+    await expect(rpc('lms_parent_request', `'${hash}','read','schedules'`)).rejects.toMatchObject({ code: '42501' });
+    await asUser(a);
   });
 });
