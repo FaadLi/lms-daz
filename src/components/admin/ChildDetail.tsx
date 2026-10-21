@@ -505,6 +505,7 @@ export function ChildDetail({ id }: { id: string }) {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-4">
                 <Avatar
+                  eager
                   id={child.avatar_id ? String(child.avatar_id) : undefined}
                   name={text(child, "full_name")}
                 />

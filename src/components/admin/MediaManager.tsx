@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Row } from "../../types";
-import { db, edge, signedMedia, upload } from "../../services/db";
+import { db, edge, upload } from "../../services/db";
+import { PrivateImage } from '../common/PrivateImage';
 import { useMutation, useQuery } from "../../services/hooks";
 import { useDraft } from "../../services/useDraft";
 import { DraftNotice } from "../common/DraftNotice";
@@ -9,31 +10,17 @@ import {
   Camera,
   Upload,
   Trash2,
-  Loader2,
   RefreshCw,
   Image as ImageIcon,
   CheckCircle2,
 } from "lucide-react";
 
-export function Avatar({ id, name }: { id?: string; name?: string }) {
-  const query = useQuery(`avatar:${id}`, async () =>
-    id ? (await signedMedia([await db.get("media_assets", id)]))[0] : null,
-  );
-
-  if (query.loading && id) {
+export function Avatar({ id, name, eager=false }: { id?: string; name?: string; eager?:boolean }) {
+  if (id) {
     return (
-      <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-400 animate-pulse">
-        <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
-      </div>
-    );
-  }
-
-  if (query.data) {
-    return (
-      <img
+      <PrivateImage assetId={id} variant="avatar" eager={eager}
         className="w-16 h-16 sm:w-20 sm:h-20 object-cover rounded-2xl border-2 border-white shadow-md"
         alt={name ? `Foto ${name}` : "Avatar"}
-        src={text(query.data, "url")}
       />
     );
   }
@@ -73,7 +60,7 @@ export function MediaManager({
       reportId: target.id,
       page,
     });
-    return { ...result, items: await signedMedia(result.items) };
+    return result;
   });
 
   const refresh = () => {
@@ -210,8 +197,7 @@ export function MediaManager({
                   key={row.id}
                   className="group relative bg-slate-50 border border-slate-200 rounded-xl overflow-hidden shadow-2xs"
                 >
-                  <img
-                    src={text(row, "url")}
+                  <PrivateImage assetId={row.id} variant="thumbnail"
                     alt={text(row, "caption") || "Dokumentasi belajar"}
                     className="w-full h-44 object-cover"
                   />

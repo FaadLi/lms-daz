@@ -22,6 +22,7 @@ export default defineConfig(() => {
             "assets/**/*.{js,css}",
             "icons/*.png",
             "icon.svg",
+            "image-placeholder.svg",
           ],
         },
         manifest: {

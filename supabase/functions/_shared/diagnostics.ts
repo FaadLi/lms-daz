@@ -1,5 +1,6 @@
 const actions = [
   "parent",
+  "media-urls",
   "issue-link",
   "finish-upload",
   "delete-media",

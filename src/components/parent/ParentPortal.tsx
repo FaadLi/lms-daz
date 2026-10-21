@@ -1,6 +1,9 @@
 import { scheduleSubjectsLabel } from "../../utils/schedules";
 import { useEffect, useState } from "react";
 import { DraftProvider, useDraft } from "../../services/useDraft";
+import { DataCacheProvider } from '../../services/queryCache';
+import { ParentMediaProvider, PrivateImage } from '../common/PrivateImage';
+import type { MediaRequest, SignedAsset } from '../../services/mediaCache';
 import { reportSubjectsLabel } from '../../utils/reports';
 import { ReportScores } from '../common/ReportScores';
 import { DraftNotice } from "../common/DraftNotice";
@@ -51,7 +54,7 @@ export function ParentPortal({ token }: { token: string }) {
     return () => { active = false; };
   }, [token]);
   if (!scope) return <main className="p-6 text-sm text-slate-500" role="status">Memulihkan draft...</main>;
-  return <DraftProvider userId={scope === "unpersisted-parent" ? "" : scope}><ParentPortalContent token={token} /></DraftProvider>;
+  return <DataCacheProvider key={scope} scope={scope} parent><DraftProvider userId={scope === "unpersisted-parent" ? "" : scope}><ParentPortalContent token={token} /></DraftProvider></DataCacheProvider>;
 }
 function ParentPortalContent({ token }: { token: string }) {
   const [section, setSection] = useState("reports");
@@ -61,13 +64,14 @@ function ParentPortalContent({ token }: { token: string }) {
   const message = String(draft.values.message);
   const mutation = useMutation();
 
-  const query = useQuery(`parent:${token}:${section}:${page}`, async () => {
+  const query = useQuery(`parent:${section}:${page}`, async () => {
     const result = await edge<PortalData>({
       action: "parent",
       token,
       operation: opened ? "read" : "open",
       section,
       page,
+      includeMediaUrls: false,
     });
     setOpened(true);
     return result;
@@ -96,7 +100,9 @@ function ParentPortalContent({ token }: { token: string }) {
     (row) => row.id === data.child.avatar_id,
   );
 
+  const mediaLoader=async(requests:MediaRequest[])=>(await edge<{items:SignedAsset[]}>({action:'parent',token,operation:'read',section,page,mediaOnly:true,requests})).items;
   return (
+    <ParentMediaProvider loader={mediaLoader}>
     <main className="min-h-screen bg-gradient-to-b from-indigo-50/40 via-slate-50 to-slate-100 text-slate-900 pb-24 font-sans">
       {/* Top Brand Banner */}
       <header className="bg-white border-b border-slate-200/80 sticky top-0 z-30 shadow-2xs">
@@ -135,8 +141,7 @@ function ParentPortalContent({ token }: { token: string }) {
               <section className="bg-white border border-slate-200/80 rounded-3xl p-5 shadow-xs space-y-3">
                 <div className="flex items-center gap-4">
                   {avatarMedia ? (
-                    <img
-                      src={text(avatarMedia, "url")}
+                    <PrivateImage assetId={avatarMedia.id} variant="avatar" eager
                       alt={`Foto ${text(child, "full_name")}`}
                       className="w-16 h-16 rounded-2xl object-cover border-2 border-white shadow-md"
                     />
@@ -322,8 +327,7 @@ function ParentPortalContent({ token }: { token: string }) {
                                 key={photo.id}
                                 className="mt-2 rounded-2xl overflow-hidden border border-slate-200 bg-slate-50"
                               >
-                                <img
-                                  src={text(photo, "url")}
+                                <PrivateImage assetId={photo.id} variant="detail"
                                   alt={
                                     text(photo, "caption") ||
                                     "Dokumentasi kegiatan les"
@@ -354,8 +358,7 @@ function ParentPortalContent({ token }: { token: string }) {
                         </>
                       ) : section === "photos" ? (
                         <div className="space-y-2">
-                          <img
-                            src={text(row, "url")}
+                          <PrivateImage assetId={row.id} variant="thumbnail"
                             alt={
                               text(row, "caption") || "Dokumentasi belajar"
                             }
@@ -522,5 +525,6 @@ function ParentPortalContent({ token }: { token: string }) {
         </footer>
       </div>
     </main>
+    </ParentMediaProvider>
   );
 }

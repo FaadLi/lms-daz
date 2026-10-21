@@ -53,11 +53,11 @@ function Dashboard({
   onOpenChild: (id: string) => void;
 }) {
   const query = useQuery("dashboard", db.dashboard);
-  const childrenQuery = useQuery("dashboard:children", () =>
-    db.list("children", { page: 0, activeOnly: true }),
+  const childrenQuery = useQuery("dashboard:children:active:0:6", () =>
+    db.list("children", { page: 0, activeOnly: true, summary:true, limit:6 }),
   );
-  const schedulesQuery = useQuery("dashboard:schedules", () =>
-    db.list("schedules", { page: 0, activeOnly: true }),
+  const schedulesQuery = useQuery("dashboard:schedules:active:0:4", () =>
+    db.list("schedules", { page: 0, activeOnly: true, summary:true, limit:4 }),
   );
 
   const stats = [

@@ -3,6 +3,14 @@ import type { Row, Page, Entity, Table } from "../types";
 import { scheduleRow } from "../utils/schedules";
 import { reportRow } from "../utils/reports";
 import { requireOnline } from "./network";
+import { invalidateData } from "./queryCache";
+import {
+  invalidateMedia,
+  mediaUrls,
+  type MediaVariant,
+  type SignedAsset,
+} from "./mediaCache";
+import { optimizeUpload } from "./images";
 
 export const PAGE_SIZE = 20;
 export function tableName(entity: Entity): Table {
@@ -21,6 +29,11 @@ const joins: Partial<Record<Entity, string>> = {
   invoices:
     "*,child:lms_children!lms_invoices_owner_id_child_id_fkey(full_name,nickname),transactions:lms_payment_transactions(amount,date,method)",
 };
+const summaries: Partial<Record<Entity, string>> = {
+  children: "id,version,full_name,nickname,grade_level,avatar_id,is_active",
+  schedules:
+    "id,version,day_of_week,start_time,end_time,child:lms_children!lms_schedules_owner_id_child_id_fkey(full_name),schedule_subjects:lms_schedule_subjects!lms_schedule_subjects_owner_id_schedule_id_fkey(subject:lms_subjects!lms_schedule_subjects_owner_id_subject_id_fkey(id,name,is_active))",
+};
 export function errorMessage(error: unknown): string {
   const e = error as { code?: string; message?: string };
   if (e.code === "40001" || e.code === "PT409")
@@ -38,6 +51,37 @@ export async function call<T>(
   requireOnline();
   const { data, error } = await client().rpc(name, args);
   if (error) throw error;
+  const changed =
+    name === "lms_save_record" || name === "lms_delete_record"
+      ? String(args.p_table).replace(/^lms_/, "")
+      : (
+          {
+            lms_save_schedule: "schedules",
+            lms_save_lesson_report: "lesson_reports",
+            lms_create_child: "children",
+            lms_comment_teacher: "comments",
+            lms_read_comments: "comments",
+            lms_mark_report_shared: "lesson_reports",
+            lms_revoke_report_link: "report_links",
+            lms_record_payment: "invoices",
+          } as Record<string, string>
+        )[name];
+  if (changed)
+    await invalidateData([
+      changed,
+      "dashboard",
+      ...(changed === "children"
+        ? ["parents", "schedules", "attendance", "invoices"]
+        : []),
+      ...(changed === "parents" ? ["children"] : []),
+      ...(changed === "subjects"
+        ? ["schedules", "lesson_reports", "report_templates"]
+        : []),
+      ...(changed === "lesson_reports" && name === "lms_delete_record"
+        ? ["comments", "report_links", "media_assets"]
+        : []),
+      ...(changed === "invoices" ? ["payment_transactions"] : []),
+    ]);
   return data as T;
 }
 export async function list(
@@ -49,6 +93,8 @@ export async function list(
     childId?: string;
     reportId?: string;
     activeOnly?: boolean;
+    summary?: boolean;
+    limit?: number;
   } = {},
 ): Promise<Page> {
   const page = options.page ?? 0;
@@ -59,7 +105,9 @@ export async function list(
     });
   let query = client()
     .from(tableName(table))
-    .select(joins[table] || "*", { count: "exact" });
+    .select((options.summary && summaries[table]) || joins[table] || "*", {
+      count: "exact",
+    });
   if (options.childId) query = query.eq("child_id", options.childId);
   if (options.reportId) query = query.eq("report_id", options.reportId);
   if (options.activeOnly) query = query.eq("is_active", true);
@@ -78,7 +126,10 @@ export async function list(
   const { data, error, count } = await query
     .order(order, { ascending: table === "schedules" })
     .order("id")
-    .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    .range(
+      page * Math.min(PAGE_SIZE, options.limit || PAGE_SIZE),
+      (page + 1) * Math.min(PAGE_SIZE, options.limit || PAGE_SIZE) - 1,
+    );
   if (error) throw error;
   const items = (data || []) as unknown as Row[];
   return {
@@ -252,21 +303,41 @@ export async function edge<T>(
       ),
       response.status,
     );
+  if (
+    authenticated &&
+    ["finish-upload", "delete-media", "issue-link", "cleanup-media"].includes(
+      String(body.action),
+    )
+  ) {
+    if (body.action !== "issue-link") invalidateMedia();
+    await invalidateData(
+      body.action === "issue-link"
+        ? ["report_links"]
+        : ["media_assets", "media_urls", "children", "profiles"],
+    );
+  }
   return data as T;
 }
-export async function signedMedia(rows: Row[]): Promise<Row[]> {
+export async function signedMedia(
+  rows: Row[],
+  variant: MediaVariant = "thumbnail",
+): Promise<Row[]> {
   if (!rows.length) return [];
-  const { data, error } = await client()
-    .storage.from("lms_media")
-    .createSignedUrls(
-      rows.map((row) => String(row.object_path)),
-      60,
-    );
-  if (error) throw error;
-  return rows.map((row, index) => {
-    if (!data?.[index]?.signedUrl) throw new Error("Foto tidak dapat diakses.");
-    return { ...row, url: data[index].signedUrl };
-  });
+  const { data } = await client().auth.getSession();
+  if (!data.session?.user.id)
+    throw new Error("Session berakhir. Masuk kembali.");
+  const urls = await mediaUrls(
+    data.session.user.id,
+    rows.map(({ id }) => ({ id, variant })),
+    async (requests) =>
+      (
+        await edge<{ items: SignedAsset[] }>(
+          { action: "media-urls", requests },
+          true,
+        )
+      ).items,
+  );
+  return rows.map((row, index) => ({ ...row, ...urls[index] }));
 }
 export async function upload(
   file: File,
@@ -283,6 +354,9 @@ export async function upload(
   let asset: Row | undefined;
   let stage = "RPC persiapan upload";
   try {
+    stage = "Optimasi gambar";
+    file = await optimizeUpload(file, kind);
+    stage = "RPC persiapan upload";
     asset = await call<Row>("lms_begin_upload", {
       p_kind: kind,
       p_child:
@@ -302,6 +376,7 @@ export async function upload(
       .upload(String(asset.object_path), file, {
         upsert: false,
         contentType: file.type,
+        cacheControl: "60",
       });
     if (error) throw error;
     stage = "Finalisasi upload";
@@ -314,8 +389,16 @@ export async function upload(
     if (asset) {
       try {
         const current = await get("media_assets", asset.id);
-        if (current.state === "ready")
+        if (current.state === "ready") {
+          invalidateMedia();
+          await invalidateData([
+            "media_assets",
+            "media_urls",
+            "children",
+            "profiles",
+          ]);
           return { ok: true, cleanupPending: true };
+        }
       } catch {
         /* Keep the original error when the status cannot be verified. */
       }

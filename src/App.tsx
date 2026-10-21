@@ -7,6 +7,7 @@ import { AdminWorkspace } from "./components/admin/AdminWorkspace";
 import { ParentPortal } from "./components/parent/ParentPortal";
 import { ErrorNotice } from "./components/common/DataUI";
 import { DraftProvider } from "./services/useDraft";
+import { DataCacheProvider, clearPrivateData } from './services/queryCache';
 
 function route() {
   const hash = window.location.hash.slice(1) || "/dashboard";
@@ -40,11 +41,13 @@ export default function App() {
     }
     let active = true;
     let generation = 0;
+    let cacheUser: string | undefined;
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, next) => {
       const request = ++generation;
       if (!active) return;
+      if (cacheUser !== next?.user.id) { clearPrivateData(); cacheUser = next?.user.id; }
       setError("");
       if (!next) {
         setSession(null);
@@ -117,12 +120,14 @@ export default function App() {
     );
   if (!session) return <LoginView />;
   return (
-    <DraftProvider key={session.user.id} userId={session.user.id}>
+    <DataCacheProvider key={session.user.id} scope={session.user.id}>
+    <DraftProvider userId={session.user.id}>
       <AdminWorkspace
         key={session.user.id}
         user={session.user}
         path={current.hash}
       />
     </DraftProvider>
+    </DataCacheProvider>
   );
 }

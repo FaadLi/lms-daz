@@ -1,41 +1,58 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useQuery as useCachedQuery } from "@tanstack/react-query";
 import { errorMessage } from "./db";
 import { mutationStarted, mutationFinished, requireOnline } from "./network";
+import {
+  createDataClient,
+  queryEntity,
+  staleTimeFor,
+  useDataScope,
+} from "./queryCache";
 
 export function useQuery<T>(
   key: string,
   loader: () => Promise<T>,
+  options: {
+    enabled?: boolean;
+    refetchInterval?:
+      number | ((query: { state: { data: T | undefined } }) => number | false);
+  } = {},
 ): { data?: T; error?: string; loading: boolean; refresh: () => void } {
   const load = useRef(loader);
   load.current = loader;
-  const [revision, setRevision] = useState(0);
-  const [state, setState] = useState<{
-    key: string;
-    data?: T;
-    error?: string;
-    loading: boolean;
-  }>({ key, loading: true });
-  useEffect(() => {
-    let active = true;
-    setState({ key, loading: true });
-    load
-      .current()
-      .then((data) => {
-        if (active) setState({ key, data, loading: false });
-      })
-      .catch((error) => {
-        if (active)
-          setState({ key, error: errorMessage(error), loading: false });
-      });
-    return () => {
-      active = false;
-    };
-  }, [key, revision]);
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  const scope = useDataScope();
+  const [isolated] = useState(createDataClient);
+  const cache = scope?.client || isolated;
+  const entity = queryEntity(key);
+  const guarded = scope?.parent || key.startsWith("edit-latest:");
+  const query = useCachedQuery(
+    {
+      queryKey: [scope?.id || "isolated", entity, key],
+      queryFn: () => load.current(),
+      staleTime: staleTimeFor(key),
+      gcTime: scope ? (scope.parent ? 0 : 20 * 60_000) : 0,
+      enabled: options.enabled,
+      refetchOnMount: guarded ? "always" : true,
+      refetchInterval:
+        options.refetchInterval ?? (scope?.parent ? 45_000 : false),
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
+    },
+    cache,
+  );
+  const refresh = useCallback(() => {
+    void cache.invalidateQueries(
+      { queryKey: [scope?.id || "isolated", entity, key], exact: true },
+      { cancelRefetch: false },
+    );
+  }, [cache, scope?.id, entity, key]);
   return {
-    ...(state.key === key
-      ? state
-      : { loading: true, data: undefined, error: undefined }),
+    data:
+      query.isError || (guarded && query.isFetching) ? undefined : query.data,
+    error: query.error ? errorMessage(query.error) : undefined,
+    loading:
+      options.enabled !== false &&
+      (query.isPending || (!!guarded && query.isFetching)),
     refresh,
   };
 }

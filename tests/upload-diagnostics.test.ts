@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Row } from "../src/types";
 import { requestLog } from "../supabase/functions/_shared/diagnostics";
+vi.mock('../src/services/images',()=>({optimizeUpload:async(file:File)=>file}));
 
 const mocks = vi.hoisted(() => ({
   rpc: vi.fn(),

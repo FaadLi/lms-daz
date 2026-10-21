@@ -10,7 +10,8 @@ export function mayServeStatic(
     !request.headers.has("authorization") &&
     (/^\/assets\/[^/]+-[\w-]+\.(js|css)$/.test(url.pathname) ||
       /^\/icons\/pwa-(192|512|maskable-512)\.png$/.test(url.pathname) ||
-      url.pathname === "/icon.svg")
+      url.pathname === "/icon.svg" ||
+      url.pathname === "/image-placeholder.svg")
   );
 }
 export function mayServeShell(

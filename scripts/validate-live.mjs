@@ -3,6 +3,7 @@ import { parseEnv } from "node:util";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import assert from "node:assert/strict";
+import { spawnSync } from 'node:child_process';
 
 const e = { ...parseEnv(readFileSync(".env.local", "utf8")), ...process.env };
 const ref = new URL(e.VITE_SUPABASE_URL).hostname.split(".")[0];
@@ -287,6 +288,49 @@ try {
     );
   assert.equal((await getSchedule()).schedule_subjects.length, 2);
   pass("create schedule with two subjects and nested PostgREST join");
+  if (process.argv.includes('--benchmark-cache-image')) {
+    const { benchmarkCacheImages } = await import('./cache-image-check.mjs');
+    await benchmarkCacheImages({ email: users[0].email, emailB:users[1].email, password, childId, mode: process.argv.includes('--after') ? 'after' : 'before',
+    checkUpload:async(kind)=>{
+      if(kind==='photo'){
+        const assets=await result(clientA.from('lms_media_assets').select('state,size_bytes,mime_type').eq('report_id',reportId).eq('kind','photo').eq('state','ready').order('created_at',{ascending:false}).limit(1));
+        return {state:assets[0].state,size:assets[0].size_bytes,mime:assets[0].mime_type};
+      }
+      const child=await result(clientA.from('lms_children').select('avatar_id').eq('id',childId).single());
+      const asset=await result(clientA.from('lms_media_assets').select('state,size_bytes,mime_type').eq('id',child.avatar_id).single());
+      return {state:asset.state,size:asset.size_bytes,mime:asset.mime_type};
+    }, setup: async (image) => {
+      await rpc(clientA,'lms_save_lesson_report',{p_data:{id:reportId,child_id:childId,schedule_id:scheduleId,date:'2026-10-21',duration_minutes:60,topic:'Benchmark report',what_learned:'Material',learning_outcome:'Observed',subject_scores:[{subject_id:subjectId,score:90}]}});
+      let avatar,photoAsset;
+      for (const kind of ['avatar','photo']) {
+        const asset = await rpc(clientA,'lms_begin_upload',{p_kind:kind,p_child:childId,p_report:kind==='photo'?reportId:null,p_mime:'image/jpeg',p_size:image.length,p_caption:kind==='photo'?'Benchmark photo':''});
+        await result(clientA.storage.from('lms_media').upload(asset.object_path,image,{contentType:'image/jpeg'}));
+        assert.equal((await edge({action:'finish-upload',assetId:asset.id,version:1},sessionA)).status,200);
+        if(kind==='avatar') avatar=asset;
+        else photoAsset=asset;
+      }
+      const signed = await result(clientA.storage.from('lms_media').createSignedUrl(avatar.object_path,60,{transform:{width:160,height:160,resize:'contain',quality:75}}));
+      const response=await fetch(signed.signedUrl); const bytes=(await response.arrayBuffer()).byteLength;
+      if(process.argv.includes('--after')){
+        const requests=[{id:avatar.id,variant:'avatar'},{id:photoAsset.id,variant:'thumbnail'}];
+        assert.equal((await edge({action:'media-urls',requests},sessionA)).status,200);
+        assert.equal((await edge({action:'media-urls',requests},sessionB)).status,403);
+        assert.equal((await edge({action:'media-urls',requests})).status,401);
+        const issued=await edge({action:'issue-link',childId,reportId,days:1},sessionA);assert.equal(issued.status,200);
+        const base={action:'parent',token:issued.data.token,operation:'read',section:'reports'};
+        const metadata=await edge({...base,includeMediaUrls:false});assert.equal(metadata.status,200);
+        assert.ok(metadata.data.media.every((item)=>!item.url&&!item.object_path));
+        const parent=await edge({...base,mediaOnly:true,requests});assert.equal(parent.status,200);assert.equal(parent.data.items.length,2);
+        assert.ok(parent.data.items.every((item)=>item.url_expires_at-item.server_time>0&&item.url_expires_at-item.server_time<=60000));
+        assert.equal((await edge({...base,mediaOnly:true,requests:[{id:randomUUID(),variant:'thumbnail'}]})).status,403);
+        await rpc(clientA,'lms_revoke_report_link',{p_child:childId});
+        assert.equal((await edge({...base,mediaOnly:true,requests})).status,403);
+        pass('batched transformed media owner/anonymous denial and parent revoke guard cached signing');
+      }
+      return {reportId,transform:{status:response.status,bytes,type:response.headers.get('content-type')}};
+    }});
+    await cleanup(); process.exit(0);
+  }
   if (process.argv.includes('--audit-report-create')) {
     const { auditReportContract, checkReportCreate } = await import('./report-create-check.mjs');
     const contract = await auditReportContract((sql) => management('/database/query', { query: sql, read_only: true }));
@@ -940,6 +984,12 @@ try {
   await result(clientB.auth.signOut());
   assert.equal((await clientB.auth.getSession()).data.session, null);
   pass("real logout");
+  if(process.argv.includes('--pwa')){
+    const checked=spawnSync(process.execPath,['scripts/pwa-browser-check.mjs','--authenticated'],{encoding:'utf8',maxBuffer:1024*1024,env:{...process.env,
+      VALIDATION_A_EMAIL:users[0].email,VALIDATION_B_EMAIL:users[1].email,VALIDATION_PASSWORD:password}});
+    let output=(checked.stdout||'')+(checked.stderr||'');for(const secret of [password,users[0].email,users[1].email])output=output.replaceAll(secret,'[REDACTED]');console.log(output);
+    assert.equal(checked.status,0,'Authenticated PWA browser regression');
+  }
   if (process.argv.includes("--keep-for-ui")) {
     writeFileSync(
       ".env.validation",

@@ -1,6 +1,13 @@
 import { createClient } from "npm:@supabase/supabase-js@2.117.3";
 import { hashToken, imageMime, randomToken } from "../_shared/security.ts";
 import { requestLog, type RequestStage } from "../_shared/diagnostics.ts";
+import {
+  clearSignedMedia,
+  signMedia,
+  validRequests,
+  type MediaRequest,
+  type MediaRow,
+} from "../_shared/media.ts";
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const url = Deno.env.get("SUPABASE_URL")!;
@@ -29,6 +36,7 @@ async function remove(owner: string, id: string, version?: number) {
   const { error } = await admin.storage.from("lms_media").remove([path]);
   if (error) throw error;
   await rpc("lms_finish_media_delete", { p_owner: owner, p_asset: id });
+  clearSignedMedia(id);
 }
 async function cleanup(owner: string) {
   const { data, error } = await admin
@@ -113,6 +121,11 @@ Deno.serve(async (request) => {
         (typeof body.id !== "string" || !uuid.test(body.id))
       )
         return respond({ error: "Permintaan tidak valid." }, 400);
+      if (
+        body.mediaOnly === true &&
+        (body.operation !== "read" || !validRequests(body.requests))
+      )
+        return respond({ error: "Permintaan media tidak valid." }, 400);
       stage = "rpc";
       const result = await rpc<ObjectRow>("lms_parent_request", {
         p_hash: hash,
@@ -126,6 +139,31 @@ Deno.serve(async (request) => {
       const media = (result.media || []) as ObjectRow[];
       const items = (result.items || []) as ObjectRow[];
       const all = body.section === "photos" ? [...media, ...items] : media;
+      if (body.mediaOnly === true) {
+        stage = "signed-read";
+        if (body.operation !== "read" || !validRequests(body.requests))
+          return respond({ error: "Permintaan media tidak valid." }, 400);
+        const signed = await signMedia(
+          String((result.child as ObjectRow).id),
+          body.requests,
+          all as MediaRow[],
+          async (path, transform) => {
+            const { data, error } = await admin.storage
+              .from("lms_media")
+              .createSignedUrl(path, 60, transform ? { transform } : undefined);
+            if (error || !data?.signedUrl) throw new Error("Photo unavailable");
+            return data.signedUrl;
+          },
+        );
+        return respond({ items: signed });
+      }
+      if (body.includeMediaUrls === false) {
+        all.forEach((row) => {
+          delete row.object_path;
+          delete row.url;
+        });
+        return respond(result);
+      }
       if (all.length) {
         stage = "signed-read";
         const { data, error } = await admin.storage
@@ -162,6 +200,33 @@ Deno.serve(async (request) => {
       }))
     )
       return respond({ error: "Terlalu banyak permintaan." }, 429);
+    if (body.action === "media-urls") {
+      if (!validRequests(body.requests))
+        return respond({ error: "Permintaan media tidak valid." }, 400);
+      const ids = [...new Set(body.requests.map((item) => item.id))];
+      stage = "metadata";
+      const { data, error } = await admin
+        .from("lms_media_assets")
+        .select("id,object_path")
+        .eq("owner_id", user.id)
+        .eq("state", "ready")
+        .in("id", ids);
+      if (error) throw error;
+      stage = "signed-read";
+      const signed = await signMedia(
+        user.id,
+        body.requests as MediaRequest[],
+        data || [],
+        async (path, transform) => {
+          const { data, error } = await admin.storage
+            .from("lms_media")
+            .createSignedUrl(path, 60, transform ? { transform } : undefined);
+          if (error || !data?.signedUrl) throw new Error("Photo unavailable");
+          return data.signedUrl;
+        },
+      );
+      return respond({ items: signed });
+    }
     if (body.action === "issue-link") {
       stage = "request";
       if (

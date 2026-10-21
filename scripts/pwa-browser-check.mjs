@@ -91,7 +91,7 @@ try {
   );
   assert.ok(
     cached.every((url) =>
-      /\/(assets\/|icons\/|icon\.svg|index\.html|manifest\.webmanifest)/.test(
+      /\/(assets\/|icons\/|icon\.svg|image-placeholder\.svg|index\.html|manifest\.webmanifest)/.test(
         url,
       ),
     ),
@@ -106,10 +106,10 @@ try {
 
   if (process.argv.includes("--authenticated")) {
     assert.ok(
-      existsSync(".env.validation"),
+      process.env.VALIDATION_A_EMAIL || existsSync(".env.validation"),
       "Run validate-live.mjs --keep-for-ui first",
     );
-    const credentials = parseEnv(readFileSync(".env.validation", "utf8"));
+    const credentials = process.env.VALIDATION_A_EMAIL ? process.env : parseEnv(readFileSync(".env.validation", "utf8"));
     const login = async (email) => {
       await page.goto(origin);
       await page.getByPlaceholder("nama@email.com").fill(email);

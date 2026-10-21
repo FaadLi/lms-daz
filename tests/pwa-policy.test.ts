@@ -8,6 +8,7 @@ describe("public static-only PWA caching policy", () => {
     mode: "navigate" as RequestMode,
   };
   it("serves hashed assets and a fixed shell, without storing token-bearing URLs", () => {
+    expect(mayServeStatic(request,new URL(`${origin}/image-placeholder.svg`),origin)).toBe(true);
     expect(
       mayServeStatic(
         request,
