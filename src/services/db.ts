@@ -10,7 +10,8 @@ import {
   type MediaVariant,
   type SignedAsset,
 } from "./mediaCache";
-import { optimizeUpload } from "./images";
+import { optimizeUpload, createImageVariants } from "./images";
+import { mediaVariantPath, type StoredMediaVariant } from "../../supabase/functions/_shared/mediaVariants";
 
 export const PAGE_SIZE = 20;
 export function tableName(entity: Entity): Table {
@@ -359,6 +360,7 @@ export async function upload(
   try {
     stage = "Optimasi gambar";
     file = await optimizeUpload(file, kind);
+    const variants = import.meta.env.VITE_LMS_STORED_MEDIA_VARIANTS === "1" ? await createImageVariants(file) : null;
     stage = "RPC persiapan upload";
     asset = await call<Row>("lms_begin_upload", {
       p_kind: kind,
@@ -382,6 +384,13 @@ export async function upload(
         cacheControl: "60",
       });
     if (error) throw error;
+    for (const variant of Object.keys(variants || {}) as StoredMediaVariant[]) {
+      const result = await client().storage.from("lms_media").upload(
+        mediaVariantPath(String(asset.object_path), variant), variants![variant],
+        {upsert:false,contentType:"image/webp",cacheControl:"60"},
+      );
+      if (result.error) throw result.error;
+    }
     stage = "Finalisasi upload";
     return await edge<{ ok: boolean; cleanupPending?: boolean }>(
       { action: "finish-upload", assetId: asset.id, version: target.version },

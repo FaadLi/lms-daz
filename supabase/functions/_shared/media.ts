@@ -12,16 +12,6 @@ type Signed = {
   server_time?: number;
 };
 const urls = new Map<string, Signed>();
-const variants = {
-  avatar: { width: 160, height: 160, resize: "contain" as const, quality: 75 },
-  thumbnail: {
-    width: 640,
-    height: 480,
-    resize: "contain" as const,
-    quality: 75,
-  },
-  detail: { width: 1280, height: 960, resize: "contain" as const, quality: 82 },
-};
 export function validRequests(value: unknown): value is MediaRequest[] {
   return (
     Array.isArray(value) &&
@@ -44,10 +34,8 @@ export async function signMedia(
   owner: string,
   requests: MediaRequest[],
   rows: MediaRow[],
-  sign: (
-    path: string,
-    transform?: (typeof variants)[keyof typeof variants],
-  ) => Promise<string>,
+  sign: (path: string, transform?: {width:number;height:number;resize:"contain";quality:number}) => Promise<string>,
+  storedVariants = false,
 ): Promise<Signed[]> {
   for (const [key, value] of urls)
     if (value.url_expires_at <= Date.now()) urls.delete(key);
@@ -57,18 +45,19 @@ export async function signMedia(
       const row = rows.find((row) => row.id === request.id);
       if (!row)
         throw Object.assign(new Error("Media unavailable"), { code: "42501" });
-      const key = `${owner}:${row.object_path}:${request.variant}`;
+      const key = `${owner}:${row.object_path}:${request.variant}:${storedVariants ? "stored-v1" : "legacy"}`;
       const cached = urls.get(key);
       if (cached && cached.url_expires_at - Date.now() > 15000)
         return { ...cached, server_time: Date.now() };
       const expires = Date.now() + 60000;
-      const url = await sign(
-        String(row.object_path),
-        request.variant === "original" ? undefined : variants[request.variant],
-      );
+      const isVariant=request.variant!=="original";
+      const dimensions=request.variant==="avatar"?{width:160,height:160}:request.variant==="thumbnail"?{width:640,height:480}:{width:1280,height:960};
+      const url = await sign(storedVariants&&isVariant?mediaVariantPath(String(row.object_path),request.variant as "avatar"|"thumbnail"|"detail"):String(row.object_path),
+        !storedVariants&&isVariant?{...dimensions,resize:"contain",quality:request.variant==="detail"?82:75}:undefined);
       const value = { id: request.id, url, url_expires_at: expires };
       urls.set(key, value);
       return { ...value, server_time: Date.now() };
     }),
   );
 }
+import {mediaVariantPath} from "./mediaVariants.ts";

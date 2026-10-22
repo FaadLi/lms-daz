@@ -52,6 +52,8 @@ export function PrivateImage({
   const ref = useRef<HTMLImageElement>(null);
   const [visible, setVisible] = useState(eager);
   const [fallback, setFallback] = useState(false);
+  const [failedUrl, setFailedUrl] = useState<string>();
+  const allowOriginalFallback = import.meta.env.VITE_LMS_STORED_MEDIA_VARIANTS !== "1";
   useEffect(() => {
     if (eager || typeof IntersectionObserver === "undefined") {
       setVisible(true);
@@ -87,13 +89,13 @@ export function PrivateImage({
   );
   const valid = query.data && query.data.url_expires_at > Date.now();
   useEffect(() => {
-    if (visible && query.error && !fallback) setFallback(true);
-  }, [visible, query.error, fallback]);
+    if (visible && query.error && !fallback && allowOriginalFallback) setFallback(true);
+  }, [visible, query.error, fallback, allowOriginalFallback]);
   return (
     <img
       {...props}
       ref={ref}
-      src={valid ? query.data!.url : "/image-placeholder.svg"}
+      src={valid && query.data!.url !== failedUrl ? query.data!.url : "/image-placeholder.svg"}
       loading={eager ? "eager" : "lazy"}
       decoding="async"
       width={props.width || (variant === "avatar" ? 160 : 640)}
@@ -104,6 +106,10 @@ export function PrivateImage({
         ...props.style,
       }}
       onError={() => {
+        if (!allowOriginalFallback) {
+          setFailedUrl(query.data?.url);
+          return;
+        }
         if (!fallback) {
           invalidateMedia(scope?.mediaScope, assetId);
           setFallback(true);

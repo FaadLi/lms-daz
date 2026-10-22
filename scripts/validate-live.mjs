@@ -78,6 +78,14 @@ const users = [],
 let sessionA, sessionB, childId, invoiceId, assetId;
 const password = `Test!${randomUUID()}`;
 const prefix = `validation-${Date.now()}`;
+let variantEncoder;
+async function uploadVariants(client, objectPath, bytes, mime) {
+  if(process.env.LMS_STORED_VARIANTS!=='1')return;
+  const {createVariantEncoder,variantObjectPath}=await import('./image-variant-tools.mjs');
+  variantEncoder??=await createVariantEncoder();
+  const variants=await variantEncoder.encode(bytes,mime);
+  for(const [variant,file] of Object.entries(variants))await result(client.storage.from('lms_media').upload(variantObjectPath(objectPath,variant),file.bytes,{contentType:'image/webp',upsert:false,cacheControl:'60'}));
+}
 const pass = (name) => console.log(`PASS ${name}`);
 async function cleanup() {
   if (!ownerIds.length) return;
@@ -92,7 +100,7 @@ async function cleanup() {
     await result(
       admin.storage
         .from("lms_media")
-        .remove(media.map((row) => row.object_path)),
+        .remove(media.flatMap((row) => [row.object_path,...['avatar','thumbnail','detail'].map(v=>`${row.object_path}.lms-v1-${v}.webp`)])),
     );
   await query(`begin;
     delete from public.lms_comments where owner_id in (${owners});
@@ -334,6 +342,12 @@ try {
   if (process.argv.includes('--scheduler')) {
     const { checkPushScheduler } = await import('./push-scheduler-check.mjs');
     await checkPushScheduler({client:clientA,query,rpc,ownerId:sessionA.user.id,childId});
+    await cleanup();process.exit(0);
+  }
+  if (process.argv.includes('--provider-push')) {
+    await rpc(clientA,'lms_save_lesson_report',{p_data:{id:reportId,child_id:childId,schedule_id:scheduleId,date:'2026-10-21',duration_minutes:60,topic:'Provider validation',what_learned:'Material',learning_outcome:'Observed',subject_scores:[{subject_id:subjectId,score:90},{subject_id:secondSubjectId,score:80}]}});
+    const { checkProviderPush } = await import('./lms-provider-push-check.mjs');
+    await checkProviderPush({clientA,edge,query,childId,reportId,sessionA,email:users[0].email,password});
     await cleanup();process.exit(0);
   }
   if (process.argv.includes('--notifications')) {
@@ -677,10 +691,14 @@ try {
     ).error,
   );
   pass("concurrent payment retry and overpayment protection");
-  const photo = Buffer.from(
+  let photo = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4xQAAAAASUVORK5CYII=",
     "base64",
   );
+  if(process.env.LMS_STORED_VARIANTS==='1'){
+    const {createVariantEncoder}=await import('./image-variant-tools.mjs');
+    variantEncoder??=await createVariantEncoder();photo=await variantEncoder.pngFixture();
+  }
   const asset = await rpc(clientA, "lms_begin_upload", {
     p_kind: "photo",
     p_child: childId,
@@ -709,11 +727,32 @@ try {
       .status,
     404,
   );
+  if(process.env.LMS_STORED_VARIANTS==='1'){
+    assert.equal((await edge({action:'finish-upload',assetId,version:1},sessionA)).status,400);
+    assert.equal((await result(clientA.from('lms_media_assets').select('state').eq('id',assetId).single())).state,'pending');
+    assert.ok((await clientB.storage.from('lms_media').upload(asset.object_path+'.lms-v1-avatar.webp',photo,{contentType:'image/webp'})).error);
+    assert.ok((await clientA.storage.from('lms_media').upload(asset.object_path+'.lms-v1-forged.webp',photo,{contentType:'image/webp'})).error);
+    pass('missing derivatives cannot finalize; foreign-owner and forged derivative uploads denied');
+  }
+  await uploadVariants(clientA,asset.object_path,photo,'image/png');
   const finished = await edge(
     { action: "finish-upload", assetId, version: 1 },
     sessionA,
   );
   assert.equal(finished.status, 200);
+  if(process.env.LMS_STORED_VARIANTS==='1'){
+    const requests=['avatar','thumbnail','detail'].map(variant=>({id:assetId,variant}));
+    const signed=await edge({action:'media-urls',requests},sessionA);assert.equal(signed.status,200);
+    for(const item of signed.data.items){
+      assert.ok(new URL(item.url).pathname.includes('.lms-v1-'));assert.ok(!item.url.includes('/render/image/'));
+      const claims=JSON.parse(Buffer.from(new URL(item.url).searchParams.get('token').split('.')[1],'base64url'));
+      assert.equal(claims.exp-claims.iat,60);
+      const response=await fetch(item.url);assert.equal(response.status,200);assert.ok((await response.arrayBuffer()).byteLength<=240*1024);
+    }
+    assert.equal((await edge({action:'media-urls',requests},sessionB)).status,403);
+    assert.equal((await edge({action:'media-urls',requests})).status,401);
+    pass('stored private WebP URLs use 60-second signatures without paid transforms; cross-owner/anonymous signing denied');
+  }
   assert.equal(
     (
       await result(
@@ -754,6 +793,7 @@ try {
         .from("lms_media")
         .upload(avatar.object_path, photo, { contentType: "image/png" }),
     );
+    await uploadVariants(clientA,avatar.object_path,photo,'image/png');
     assert.equal(
       (
         await edge(
@@ -1016,6 +1056,7 @@ try {
   );
   process.exitCode = 1;
 } finally {
-  if (!process.argv.includes("--keep-for-ui") || process.exitCode)
-    await cleanup();
+  try {
+    if (!process.argv.includes("--keep-for-ui") || process.exitCode) await cleanup();
+  } finally { await variantEncoder?.close(); }
 }

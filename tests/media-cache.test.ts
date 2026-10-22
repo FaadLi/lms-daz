@@ -105,4 +105,14 @@ describe("private signed URL memory lifecycle", () => {
     expect(validRequests([{ ...request, object_path: "forged" }])).toBe(false);
     expect(validRequests([{ ...request, variant: "forged" }])).toBe(false);
   });
+  it("signs stored private derivatives without paid transforms and checks authorization before using cache", async () => {
+    const request={id:"11111111-1111-4111-8111-111111111111",variant:"thumbnail" as const};
+    const rows=[{id:request.id,object_path:"reports/owner/photo.jpg"}];
+    const signer=vi.fn(async()=>"signed");
+    await signMedia("owner",[request],rows,signer,true);
+    expect(signer).toHaveBeenCalledWith("reports/owner/photo.jpg.lms-v1-thumbnail.webp",undefined);
+    await expect(signMedia("owner",[request],[],signer,true)).rejects.toMatchObject({code:"42501"});
+    await signMedia("owner",[{...request,variant:"original"}],rows,signer,true);
+    expect(signer).toHaveBeenLastCalledWith("reports/owner/photo.jpg",undefined);
+  });
 });

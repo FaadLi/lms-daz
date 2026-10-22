@@ -8,10 +8,12 @@ import {
   type MediaRequest,
   type MediaRow,
 } from "../_shared/media.ts";
+import {mediaVariantPath,mediaVariantSpecs,webpDimensions,type StoredMediaVariant} from "../_shared/mediaVariants.ts";
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const url = Deno.env.get("SUPABASE_URL")!;
 const secret = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const storedVariants = Deno.env.get("LMS_STORED_MEDIA_VARIANTS") === "1";
 const origins = (Deno.env.get("ALLOWED_ORIGINS") || "")
   .split(",")
   .map((value) => value.trim())
@@ -33,7 +35,9 @@ async function remove(owner: string, id: string, version?: number) {
     p_version: version ?? null,
   });
   if (!path) return;
-  const { error } = await admin.storage.from("lms_media").remove([path]);
+  const { error } = await admin.storage.from("lms_media").remove([
+    path,...(Object.keys(mediaVariantSpecs) as StoredMediaVariant[]).map(variant=>mediaVariantPath(path,variant)),
+  ]);
   if (error) throw error;
   await rpc("lms_finish_media_delete", { p_owner: owner, p_asset: id });
   clearSignedMedia(id);
@@ -78,6 +82,9 @@ Deno.serve(async (request) => {
     console.info(requestLog(action, stage, 204));
     return new Response(null, { status: 204, headers });
   }
+  // Operational write freeze for migration; disabled in normal operation.
+  if (Deno.env.get("LMS_MAINTENANCE") === "1")
+    return respond({ error: "LMS sedang dalam pemeliharaan. Coba lagi nanti." }, 503);
   stage = "request";
   if (request.method !== "POST")
     return respond({ error: "Gunakan POST." }, 405);
@@ -150,10 +157,10 @@ Deno.serve(async (request) => {
           async (path, transform) => {
             const { data, error } = await admin.storage
               .from("lms_media")
-              .createSignedUrl(path, 60, transform ? { transform } : undefined);
+              .createSignedUrl(path, 60, transform ? {transform} : undefined);
             if (error || !data?.signedUrl) throw new Error("Photo unavailable");
             return data.signedUrl;
-          },
+          },storedVariants,
         );
         return respond({ items: signed });
       }
@@ -220,10 +227,10 @@ Deno.serve(async (request) => {
         async (path, transform) => {
           const { data, error } = await admin.storage
             .from("lms_media")
-            .createSignedUrl(path, 60, transform ? { transform } : undefined);
+            .createSignedUrl(path, 60, transform ? {transform} : undefined);
           if (error || !data?.signedUrl) throw new Error("Photo unavailable");
           return data.signedUrl;
-        },
+        },storedVariants,
       );
       return respond({ items: signed });
     }
@@ -279,6 +286,17 @@ Deno.serve(async (request) => {
           { error: "Isi file tidak cocok dengan format/ukuran gambar." },
           400,
         );
+      }
+      stage = "rpc";
+      // A ready asset must have bounded private derivatives. Originals stay intact.
+      for (const variant of (storedVariants ? Object.keys(mediaVariantSpecs) : []) as StoredMediaVariant[]) {
+        stage = "storage-read";
+        const {data:derived,error:variantError}=await admin.storage.from("lms_media").download(mediaVariantPath(asset.object_path,variant));
+        if(variantError||!derived) return respond({error:"Varian gambar belum tersedia. Selesaikan upload sebelum finalisasi."},400);
+        stage = "image-validation";
+        const content=new Uint8Array(await derived.arrayBuffer()),dimensions=webpDimensions(content),spec=mediaVariantSpecs[variant];
+        if(!dimensions||content.length>spec.maxBytes||dimensions.width<1||dimensions.height<1||dimensions.width>spec.width||dimensions.height>spec.height)
+          return respond({error:"Varian gambar tidak valid. Ulangi optimasi gambar."},400);
       }
       stage = "rpc";
       await rpc("lms_finish_upload", {

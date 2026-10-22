@@ -5,6 +5,7 @@ import { mkdirSync,mkdtempSync,rmSync,writeFileSync } from 'node:fs';
 import { resolve,join,sep } from 'node:path';
 
 export async function checkNotifications({clientA,clientB,admin,edge,rpc:runRpc,query,childId,reportId,sessionA,url,email,emailB,password}) {
+  const browserOrigin=process.env.LMS_PRODUCTION_SMOKE==='1'?'https://lms.daztore.web.id':'http://127.0.0.1:3000';
   const rpc=async(client,name,args)=>{
     try{return await runRpc(client,name,args);}catch{throw new Error(`Notification validation RPC ${name} failed`);}
   };
@@ -51,10 +52,10 @@ export async function checkNotifications({clientA,clientB,admin,edge,rpc:runRpc,
   try {
     const cdp=await context.newCDPSession(page);let registrationId;
     cdp.on('ServiceWorker.workerRegistrationUpdated',event=>{
-      for(const registration of event.registrations)if(registration.scopeURL==='http://127.0.0.1:3000/')registrationId=registration.registrationId;
+      for(const registration of event.registrations)if(registration.scopeURL===browserOrigin+'/')registrationId=registration.registrationId;
     });
     await cdp.send('ServiceWorker.enable');
-    await page.goto('http://127.0.0.1:3000');await page.evaluate(()=>navigator.serviceWorker.ready);
+    await page.goto(browserOrigin);await page.evaluate(()=>navigator.serviceWorker.ready);
     const login=async(email)=>{
       await page.getByPlaceholder('nama@email.com').fill(email);
       await page.getByPlaceholder('••••••••').fill(password);
@@ -95,7 +96,7 @@ export async function checkNotifications({clientA,clientB,admin,edge,rpc:runRpc,
     },deviceId);
     assert.ok(registrationId,'Controlling service worker registered');
     const payload={type:'parent_comment',notificationId:notice.id,childId,subscriptionId:deviceId};
-    await cdp.send('ServiceWorker.deliverPushMessage',{origin:'http://127.0.0.1:3000',registrationId,data:JSON.stringify(payload)});
+    await cdp.send('ServiceWorker.deliverPushMessage',{origin:browserOrigin,registrationId,data:JSON.stringify(payload)});
     let notification=[];
     // Poll from Node: this Playwright version treats an async waitForFunction
     // predicate's Promise as truthy before the async condition has resolved.
@@ -106,7 +107,7 @@ export async function checkNotifications({clientA,clientB,admin,edge,rpc:runRpc,
     }
     assert.equal(notification.length,1,'Native notification displayed by the actual service worker');
     assert.equal(notification[0].title,'Komentar baru');assert.ok(!JSON.stringify(notification).includes('Private validation comment'));
-    await cdp.send('ServiceWorker.deliverPushMessage',{origin:'http://127.0.0.1:3000',registrationId,data:JSON.stringify(payload)});
+    await cdp.send('ServiceWorker.deliverPushMessage',{origin:browserOrigin,registrationId,data:JSON.stringify(payload)});
     assert.ok(await page.evaluate(async()=>(await(await navigator.serviceWorker.ready).getNotifications()).length)<=1);
     evidence.checks.push('Chrome injected PushEvent displays generic OS notification and repeated event coalesces');
     await page.getByRole('button',{name:'Keluar',exact:true}).click();
@@ -117,12 +118,12 @@ export async function checkNotifications({clientA,clientB,admin,edge,rpc:runRpc,
     await page.getByRole('button',{name:'Notifikasi',exact:true}).click();await page.getByText('Belum ada notifikasi.').waitFor();
     const panel=await page.getByRole('region',{name:'Pusat notifikasi'}).boundingBox();
     assert.ok(panel.x>=0&&panel.x+panel.width<=390,'Mobile notification panel fits the viewport');
-    await cdp.send('ServiceWorker.deliverPushMessage',{origin:'http://127.0.0.1:3000',registrationId,data:JSON.stringify(payload)});
+    await cdp.send('ServiceWorker.deliverPushMessage',{origin:browserOrigin,registrationId,data:JSON.stringify(payload)});
     await page.waitForTimeout(500);
     assert.equal(await page.evaluate(async()=>(await(await navigator.serviceWorker.ready).getNotifications()).length),0);
     evidence.checks.push('logout clears notifications, mobile panel fits and account B rejects late account A push');
     const cacheUrls=await page.evaluate(async()=> (await Promise.all((await caches.keys()).map(async name=>(await(await caches.open(name)).keys()).map(request=>request.url)))).flat());
-    assert.ok(cacheUrls.every(value=>value.startsWith('http://127.0.0.1:3000/')&&!value.includes('token=')&&!value.includes('supabase')));
+    assert.ok(cacheUrls.every(value=>value.startsWith(browserOrigin+'/')&&!value.includes('token=')&&!value.includes('supabase')));
     evidence.browserErrors=browserErrors;assert.equal(browserErrors,0);
     writeFileSync('supabase/.temp/notification-check.json',JSON.stringify(evidence,null,2));
     console.log('PASS hosted notification browser, Realtime, injected Chrome PushEvent, account switch and private cache regression');

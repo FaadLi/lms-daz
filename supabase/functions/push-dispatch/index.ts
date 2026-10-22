@@ -9,6 +9,8 @@ Deno.serve(async request => {
   if (request.method!=='POST') return response(405,{error:'POST required'});
   if (request.headers.has('origin') || !(await trustedDispatcher(request.headers.get('x-lms-push-secret'),Deno.env.get('LMS_PUSH_DISPATCH_SECRET'))))
     return response(401,{error:'Backend authorization required'});
+  // Never claim a delivery while the migration maintenance gate is enabled.
+  if (Deno.env.get('LMS_MAINTENANCE')==='1') return response(503,{error:'LMS maintenance'});
   const publicKey = Deno.env.get('VAPID_PUBLIC_KEY');
   const privateKey = Deno.env.get('VAPID_PRIVATE_KEY');
   const subject = Deno.env.get('VAPID_SUBJECT');
