@@ -1,73 +1,176 @@
-# Les Report
+# Les Report (LMS-DAZ)
 
-React/Vite SPA with Supabase Auth, PostgreSQL RLS, private Storage, and a token-scoped Supabase Edge Function. Business records are never stored in browser storage. Supabase Auth alone persists its session.
+**Les Report** adalah aplikasi pengelolaan les privat untuk guru, mulai dari data murid, jadwal, absensi, laporan pembelajaran, penilaian, hingga pembayaran. Orang tua dapat membuka **raport digital melalui tautan privat tanpa login**, mengirim komentar, dan guru akan menerima notifikasi di aplikasi/PWA.
 
-## Local setup
+**Aplikasi:** [lms.daztore.web.id](https://lms.daztore.web.id)  
+**Frontend:** React + Vite PWA di Cloudflare Pages  
+**Backend:** Supabase Singapore (`db-daz`)
 
-1. Copy `.env.example` to `.env.local` and set the project URL and publishable key.
-2. Install with `npm ci` using Node 22.12 or later.
-3. Create teacher accounts through Supabase Auth. The first login asks for the teacher profile. Subjects, templates, guardians, and pupils start empty.
-4. Run `npm run dev` (port 3000).
+## Tujuan
 
-Never put a secret/service-role key, database password, or access token in a `VITE_` variable. Local `.env*` files are ignored by Git.
+- Memusatkan administrasi les dan riwayat perkembangan murid dalam satu aplikasi.
+- Memudahkan guru mendokumentasikan pembelajaran dan nilai secara konsisten.
+- Memudahkan orang tua memantau hasil les dan memberikan umpan balik tanpa membuat akun.
+- Mendukung akses desktop dan mobile, termasuk instalasi PWA serta notifikasi komentar.
 
-## Versioned database and function deployment
+## Cara kerja
 
-Supply these local environment variables: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, and `SUPABASE_PROJECT_REF` (the project ID, not its dashboard URL).
+Alur utama dimulai dari guru yang mengelola kegiatan les hingga orang tua membaca raport dan mengirim komentar.
 
-```powershell
-npx supabase link --project-ref "$env:SUPABASE_PROJECT_REF"
-# For a project upgrading the original LMS schema, prepare the private bucket
-# and verify object copies before the namespace database migration.
-node scripts/namespace-storage.mjs prepare
-npx supabase db push
-node scripts/namespace-storage.mjs verify
-node scripts/supabase-cli.mjs origins
-npx supabase functions deploy lesreport
-node scripts/namespace-storage.mjs finalize
+```mermaid
+flowchart TD
+    A[Guru login] --> B[Kelola murid, wali, mapel, dan template]
+    B --> C[Buat jadwal multi-mata pelajaran]
+    C --> D[Catat absensi dan laporan sesi]
+    D --> E[Input nilai per mata pelajaran]
+    E --> F[Hitung nilai keseluruhan: rata-rata]
+    F --> G[Terbitkan tautan raport privat]
+    G --> H[Bagikan ke orang tua, misalnya via WhatsApp]
+    H --> I[Orang tua membaca raport tanpa login]
+    I --> J[Orang tua mengirim komentar]
+    J --> K[Guru menerima notifikasi dan Web Push]
 ```
 
-The wrapper `node scripts/supabase-cli.mjs link` and its `push`/`deploy` commands read the same variables from `.env.local`, verify that the target matches the frontend project, and redact privileged credentials from CLI output. The `origins` command always sets the exact production and development allowlist below, so it cannot reset production to localhost-only:
+> **Contoh penilaian:** Matematika 90 dan IPA 80 dalam satu laporan menghasilkan nilai keseluruhan **85**. Guru dapat memilih hanya mata pelajaran yang benar-benar diajarkan pada sesi tersebut.
 
-```text
-ALLOWED_ORIGINS=https://lms.daztore.web.id,http://localhost:3000,http://127.0.0.1:3000
+## Fitur utama
+
+| Modul | Fungsi |
+| --- | --- |
+| **Murid & Orang Tua** | Profil, relasi wali, dan riwayat kegiatan les. |
+| **Jadwal** | Satu jadwal dapat mencakup beberapa mata pelajaran. |
+| **Absensi** | Catat kehadiran per sesi dengan perlindungan terhadap pencatatan ganda. |
+| **Laporan & Nilai** | Raport per sesi, nilai tiap mata pelajaran, dan nilai keseluruhan otomatis. |
+| **Raport Digital Privat** | Tautan berbatas waktu/cakupan, dapat dicabut, tanpa akun orang tua. |
+| **Komentar & Notifikasi** | Komentar orang tua, pusat notifikasi guru, Realtime, dan Web Push PWA. |
+| **Pembayaran** | Tagihan dan transaksi dengan status/saldo berdasarkan ledger pembayaran. |
+| **Foto & Media** | Private Storage, WebP, varian thumbnail, dan signed URL sementara. |
+| **PWA & Draft** | Instalasi ke perangkat serta pemulihan input form yang belum disimpan. |
+
+## Alur raport privat & notifikasi
+
+Akses orang tua diproses oleh backend tepercaya; komentar disimpan terlebih dahulu sebelum notifikasi dikirim. Pengiriman Web Push berjalan terpisah agar kegagalan push tidak membatalkan komentar.
+
+```mermaid
+sequenceDiagram
+    actor Guru
+    participant App as Les Report / PWA
+    participant Edge as Edge Function lesreport
+    participant DB as Supabase PostgreSQL
+    actor Wali as Orang Tua
+    participant Dispatch as push-dispatch
+    participant Push as Layanan Web Push
+
+    Guru->>App: Simpan laporan dan nilai
+    App->>DB: Simpan melalui akses terotorisasi
+    Guru->>App: Terbitkan tautan privat
+    App->>Edge: Minta tautan (JWT guru)
+    Edge->>DB: Verifikasi izin dan simpan hash token
+    Edge-->>App: Tautan privat
+    Guru-->>Wali: Bagikan tautan
+    Wali->>App: Buka raport tanpa akun
+    App->>Edge: Verifikasi token privat
+    Edge->>DB: Periksa scope, masa berlaku, dan revoke
+    Edge-->>App: Data raport terbatas
+    Wali->>App: Kirim komentar
+    App->>Edge: Kirim komentar dengan token
+    Edge->>DB: Simpan komentar dan notifikasi/outbox
+    DB-->>Edge: Berhasil
+    Edge-->>App: Komentar tersimpan
+    Note over DB,Dispatch: Scheduler memproses antrean notifikasi
+    DB->>Dispatch: Ambil pengiriman yang siap
+    Dispatch->>Push: Kirim Web Push (VAPID)
+    Push-->>Guru: Notifikasi pada PWA/perangkat
 ```
 
-This is backend configuration, not a `VITE_` variable. No wildcard or arbitrary preview origins are accepted. For function-only releases use `node scripts/supabase-cli.mjs origins` followed by `node scripts/supabase-cli.mjs deploy`; do not run database migration commands for CORS updates.
+**Catatan:** Web Push memerlukan izin notifikasi. Pada iPhone, PWA harus ditambahkan ke Home Screen (iOS 16.4+). Bunyi notifikasi ketika aplikasi di background mengikuti pengaturan sistem operasi.
 
-For a completely new project, apply the migrations with `db push`, deploy the function, then run `namespace-storage.mjs finalize` to retire the empty historical bucket. The `prepare`/`verify` steps above are for existing installations. All current LMS tables and RPCs use the `lms_` namespace; the private Storage bucket is `lms_media`. The existing nine migrations are immutable; `202610150010_lms_namespace.sql` performs the namespace transition without replacing business rows.
+## Arsitektur & infrastruktur
 
-`verify_jwt=false` allows public parent-token requests to reach the function. Every teacher action explicitly verifies the JWT using Supabase Auth `getUser`; public actions verify a SHA-256 token hash in a service-only database RPC. The standard server-side `SUPABASE_SERVICE_ROLE_KEY` is injected by Supabase into its Edge runtime and is never bundled into the SPA.
+```mermaid
+flowchart TB
+    subgraph Client[Pengguna]
+        T[Guru: browser / PWA]
+        P[Orang tua: browser]
+    end
 
-## Data integrity
+    CF["Cloudflare Pages<br/>React + Vite + PWA"]
+    T --> CF
+    P --> CF
 
-- All exposed tables use owner-only RLS; composite FKs prevent cross-owner relationships.
-- Versioned updates reject stale forms with `PT409` (HTTP 409) instead of overwriting newer changes. A serialization SQLSTATE is intentionally not used for application conflicts.
-- Guardian + pupil creation is transactional. UUIDs are reused across uncertain request retries.
-- Attendance is unique by pupil/date/start time and also by schedule/date.
-- Payment recording locks the invoice and uses a unique idempotency key. Payment status and balance are derived from the ledger; paid invoices cannot be edited.
-- Historical records with active FK references cannot be deleted. Deactivate pupils/schedules/subjects instead. Remove report photos before deleting a report; its scoped links are revoked and comments removed in the same transaction.
-- Templates provide material/plans only. Scores and observed learning outcomes must be entered by the teacher.
+    subgraph SG[Supabase Singapore - db-daz]
+        AUTH[Supabase Auth]
+        API[Data API + PostgreSQL RLS]
+        MEDIA[Private Storage: lms_media]
+        EDGE[Edge Function: lesreport]
+        RT[Realtime + Notification Center]
+        JOB[Cron + private outbox]
+        DISP[Edge Function: push-dispatch]
+    end
 
-## Private media and report links
+    CF -->|Login dan session guru| AUTH
+    CF -->|CRUD terotorisasi| API
+    CF -->|Raport privat dan finalisasi media| EDGE
+    CF -->|Signed URL dan upload sesuai policy| MEDIA
+    API --> RT
+    API --> JOB
+    JOB --> DISP
+    DISP --> WEBPUSH[Web Push / push provider]
+    WEBPUSH --> T
+    RT --> CF
+    EDGE --> API
+    EDGE --> MEDIA
+```
 
-Uploads are prepared in the database before Storage accepts their path. The Edge Function checks size and image signature before finalizing metadata. Supported formats: JPEG, PNG, WebP; maximum 5 MB, 10 photos/report.
+| Lapisan | Teknologi | Tanggung jawab |
+| --- | --- | --- |
+| **Frontend** | React, TypeScript, Vite, Tailwind CSS | UI responsif guru dan portal raport orang tua. |
+| **Hosting** | Cloudflare Pages | Menyajikan SPA dan aset statis melalui CDN. |
+| **PWA** | Web App Manifest & Service Worker | Instalasi aplikasi, caching aset, penerimaan push. |
+| **Data fetching** | TanStack Query | Cache memori per akun, deduplikasi, dan invalidasi data. |
+| **Database** | Supabase PostgreSQL (Singapore) | Data operasional, relasi, RLS, constraint, RPC. |
+| **Authentication** | Supabase Auth | Login dan sesi guru. |
+| **Media** | Private Supabase Storage `lms_media` | Foto, avatar, dan varian WebP. |
+| **Trusted backend** | Edge Functions `lesreport`, `push-dispatch` | Token raport, operasi media, distribusi Web Push. |
+| **Notifikasi** | Realtime, private outbox, Cron, VAPID | Notifikasi langsung dan push ke perangkat guru. |
 
-Upload errors identify RPC preparation, Storage upload, or Edge finalization. A failed/lost finalization response is reconciled against metadata before suggesting a retry. Edge diagnostics contain only a recognized action, fixed stage and HTTP status; JWTs, parent tokens, payloads, signed URLs and secrets are never included.
+**Tidak ada server aplikasi Express/Fastify di Cloudflare Pages.** UI statis dilayani Cloudflare, sementara data bisnis dan operasi tepercaya ditangani Supabase.
 
-Storage uses the private `lms_media` bucket. New keys are organized as `avatars/<owner>/...`, `children/<owner>/<child>/...`, and `reports/<owner>/<child>/<report>/...`. Existing keys are retained during copy/cutover to preserve references. Signed URLs expire after 60 seconds; an already issued URL may remain usable until expiry after a report-link revocation. The UI offers a refresh action. Parent endpoints check revocation and expiry on every request and return bounded, scoped data without object paths.
+## Keamanan, integritas & performa
 
-Raw report tokens appear only in the issue response and component memory. Reloading loses the raw link; issuing another rotates/revokes the previous one. Single-report links cannot read sibling reports, schedules, invoices, or attendance. Access counters are updated atomically. Public requests have persistent rate limits.
+- **Namespace:** tabel bisnis LMS memakai prefix `lms_`; bucket media privat bernama `lms_media`. Tabel bawaan Supabase seperti `auth.users` tidak diubah.
+- **Isolasi akun:** akses guru dilindungi Supabase Auth, RLS, ownership, dan validasi backend. Orang tua hanya bisa mengakses data sesuai token privat yang masih berlaku.
+- **Tautan privat:** token disimpan dalam bentuk hash, memiliki cakupan dan kedaluwarsa, serta dapat dicabut. Signed URL media berlaku **60 detik**; URL yang sudah diterbitkan mungkin tetap bisa diakses hingga masa berlakunya habis.
+- **Keandalan data:** update dengan versi stale ditolak HTTP 409; transaksi pembayaran atomik dan idempoten; absensi memiliki proteksi duplikasi.
+- **Cache:** Supabase tetap menjadi *source of truth*. TanStack Query menggunakan cache memori; `localStorage` hanya untuk draft form yang belum tersimpan. Data privat dan signed URL tidak disimpan ke cache persisten Service Worker.
+- **Gambar:** kompresi/resize sebelum upload dan varian WebP untuk avatar, thumbnail, dan detail menghindari unduhan foto asli berukuran besar.
+- **Notifikasi:** kegagalan pengiriman push tidak membatalkan komentar yang sudah tersimpan; outbox memfasilitasi pengiriman ulang terkontrol.
 
-Avatar replacement queues the previous object for deletion. Cleanup is retryable: `Bersihkan Upload` processes queued deletions and abandoned pending uploads older than 24 hours, 50 at a time. Run repeatedly until empty. A periodic production job should invoke the same cleanup logic if teachers may leave abandoned uploads unattended.
+## Menjalankan secara lokal
 
-## Validation
+**Prasyarat:** Node.js **22.12+**, npm, serta project Supabase development yang telah dikonfigurasi.
 
-Autosave draft design, supported forms, PWA caching/update policy and test instructions: [Drafts and PWA](docs/DRAFTS_PWA.md).
+```bash
+npm ci
+cp .env.example .env.local
+npm run dev
+```
 
-Multi-subject schedule schema, migration evidence, changed files, validation and rollout notes: [Multi-subject Jadwal](docs/MULTI_SUBJECT_SCHEDULES.md).
+Isi `.env.local` dengan key publik untuk project development:
 
-```powershell
+```env
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+VITE_VAPID_PUBLIC_KEY=<vapid-public-key>
+```
+
+Aplikasi berjalan di **http://localhost:3000**. Akun guru dikelola melalui Supabase Auth. Jangan gunakan database production untuk seed atau eksperimen.
+
+> **Penting:** jangan memasukkan password database, access token, service-role/secret key, VAPID private key, atau secret dispatcher ke variabel `VITE_*`, Git, maupun bundle frontend. Gunakan environment/secrets backend yang sesuai.
+
+## Validasi & build
+
+```bash
 npm run typecheck
 npm run typecheck:edge
 npm run lint
@@ -75,23 +178,36 @@ npm test
 npm run build
 ```
 
-Tests use isolated PostgreSQL (PGlite) with minimal Auth/Storage schema shims; they are not a substitute for hosted API verification.
+Hasil build tersedia di `dist/`. Test lokal tidak menggantikan smoke test terhadap Supabase hosted atau pengujian PWA pada perangkat nyata.
 
-`node scripts/validate-live.mjs` validates the configured development project using temporary Auth users, real sessions, two-user isolation, constraints, concurrent updates/payments, private Storage, and deployed Edge endpoints. The management access token must have permission to read server-side API credentials; credentials remain in the Node process. Fixtures are cleaned on completion. `--keep-for-ui` writes only temporary test-account credentials to ignored `.env.validation`; clean these with `node scripts/validate-live.mjs --cleanup` after UI checks.
+## Deployment production
 
-## Cloudflare Pages
+| Pengaturan Cloudflare Pages | Nilai |
+| --- | --- |
+| Domain | [lms.daztore.web.id](https://lms.daztore.web.id) |
+| Branch rilis | `main` |
+| Build command | `npm run build` |
+| Output directory | `dist` |
+| Root directory | Root repository |
+| Build variables | `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_VAPID_PUBLIC_KEY` |
 
-- Build: `npm run build`; output: `dist`; root: repository root.
-- Set Node 22.12+ (prefer a maintained Node 22 release).
-- Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` as build variables in production and preview environments.
-- Configure Supabase Auth Site URL and redirect allowlist for the production domain and explicitly approved preview origins. Password login does not require a callback route; future email-link flows must use allowed URLs.
-- Update Edge `ALLOWED_ORIGINS` for those exact frontend origins. Arbitrary preview origins are intentionally rejected.
-- Hash routing works with static Pages hosting. No Node backend, SSR, filesystem, or persistent PostgreSQL connection is needed on Cloudflare.
+Backend production menggunakan project Supabase **`db-daz` di Singapore (`ap-southeast-1`)**.
 
-The backend remains on Supabase, so Workers migration is unnecessary.
+- Simpan perubahan schema dalam migration versioned di `supabase/migrations/`.
+- Deploy Edge Functions dan atur secrets, Vault, serta scheduler pada project yang benar.
+- Pastikan Supabase Auth redirects dan Edge `ALLOWED_ORIGINS` sesuai domain yang diizinkan.
+- Lakukan **redeploy Pages** setiap kali build variables `VITE_*` berubah.
+- Project Supabase lama di US tetap digunakan aplikasi lain. **Jangan melakukan full restore US ke `db-daz`**, karena Singapore sudah menyimpan data production yang lebih baru.
 
-The production LMS domain is `https://lms.daztore.web.id` and is included in Edge `ALLOWED_ORIGINS`. Separate deployment TODO: the verified Auth Site URL remains `https://daztore.web.id`, with redirect allowlist `https://daztore.web.id/admin-daz/auth/callback`. These Auth values have not been changed; review them in a separate deployment task. Frontend diagnostic changes take effect when the new `dist` is published through the Cloudflare Pages pipeline.
+## Dokumentasi teknis
 
-The current namespace and validation record is in [docs/NAMESPACE_STATUS.md](docs/NAMESPACE_STATUS.md). [docs/MIGRATION_STATUS.md](docs/MIGRATION_STATUS.md) records the earlier migration before namespacing. Browser UI verification remains outstanding; API validation does not establish visual or interactive UI parity.
+Dokumentasi mendalam disimpan di folder [`docs/`](docs/), sedangkan README ini menjelaskan produk dan arsitektur utamanya.
 
-The production CORS deployment, hosted regression results and original pending-upload reconciliation are recorded in [docs/PRODUCTION_CORS_STATUS.md](docs/PRODUCTION_CORS_STATUS.md).
+- [Migrasi US → Singapore & cutover](docs/SUPABASE_FULL_MIGRATION.md)
+- [Schema dan namespace `lms_`](docs/NAMESPACE_STATUS.md)
+- [Jadwal multi-mata pelajaran](docs/MULTI_SUBJECT_SCHEDULES.md)
+- [Draft form & PWA](docs/DRAFTS_PWA.md)
+- [Optimasi cache & gambar](docs/CACHE_IMAGES.md)
+- [Notifikasi & Web Push](docs/PUSH_NOTIFICATIONS.md)
+- [Status migrasi awal](docs/MIGRATION_STATUS.md)
+- [Riwayat perbaikan CORS production](docs/PRODUCTION_CORS_STATUS.md)
